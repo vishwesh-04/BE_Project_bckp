@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+COPY client-requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip && \
+    pip install torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install -r /app/requirements.txt
+
+COPY client/ /app/client/
+COPY common/ /app/common/
+COPY privacy/ /app/privacy/
+COPY preprocessing/ /app/preprocessing/
+COPY docker/ /app/docker/
+
+RUN chmod +x /app/docker/*.sh
+
+CMD ["/app/docker/client-entrypoint.sh"]

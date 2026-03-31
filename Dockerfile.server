@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+COPY server-requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip && \
+    pip install torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install -r /app/requirements.txt
+
+COPY server/ /app/server/
+COPY common/ /app/common/
+COPY privacy/ /app/privacy/
+COPY preprocessing/ /app/preprocessing/
+COPY docker/ /app/docker/
+
+RUN chmod +x /app/docker/*.sh
+
+EXPOSE 45678
+
+CMD ["/app/docker/server-entrypoint.sh"]

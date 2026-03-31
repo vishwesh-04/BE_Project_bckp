@@ -1,0 +1,157 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: fl-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: fl-server
+    env_file:
+      - examples/server.env.example
+    environment:
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      MIN_CLIENTS: "3"
+      MODEL_DIR: /app/models
+      ARTIFACT_DIR: /app/models
+      LOG_DIR: /app/logs
+      TRAINING_LOG_PATH: /app/logs/server-training.log
+      CONTROL_API_LOG_PATH: /app/logs/server-control-api.log
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "45678:45678"
+    volumes:
+      - models_data:/app/models
+      - logs_data:/app/logs
+      - ./data:/app/data:ro
+
+  control-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    command: /app/docker/control-api-entrypoint.sh
+    container_name: fl-control-api
+    env_file:
+      - examples/server.env.example
+    environment:
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      MIN_CLIENTS: "3"
+      MODEL_DIR: /app/models
+      ARTIFACT_DIR: /app/models
+      LOG_DIR: /app/logs
+      TRAINING_LOG_PATH: /app/logs/server-training.log
+      CONTROL_API_LOG_PATH: /app/logs/server-control-api.log
+      CONTROL_API_HOST: "0.0.0.0"
+      CONTROL_API_PORT: "8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      server:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    volumes:
+      - models_data:/app/models
+      - logs_data:/app/logs
+      - ./data:/app/data:ro
+
+  inference-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    command: /app/docker/inference-api-entrypoint.sh
+    container_name: fl-inference-api
+    env_file:
+      - examples/server.env.example
+    environment:
+      MODEL_DIR: /app/models
+      ARTIFACT_DIR: /app/models
+      INFERENCE_API_HOST: "0.0.0.0"
+      INFERENCE_API_PORT: "8001"
+    depends_on:
+      server:
+        condition: service_started
+    ports:
+      - "8001:8001"
+    volumes:
+      - models_data:/app/models:ro
+      - ./data:/app/data:ro
+
+  client1:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: fl-client-1
+    env_file:
+      - examples/client1.env.example
+    environment:
+      CLIENT_SERVER_ADDRESS: server:45678
+      CLIENT_CONTROL_PORT: "8011"
+      SERVER_CONTROL_URL: http://control-api:8000
+    depends_on:
+      server:
+        condition: service_started
+    ports:
+      - "8011:8011"
+    volumes:
+      - ./data:/app/data:ro
+
+  client2:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: fl-client-2
+    env_file:
+      - examples/client2.env.example
+    environment:
+      CLIENT_SERVER_ADDRESS: server:45678
+      CLIENT_CONTROL_PORT: "8012"
+      SERVER_CONTROL_URL: http://control-api:8000
+    depends_on:
+      server:
+        condition: service_started
+    ports:
+      - "8012:8012"
+    volumes:
+      - ./data:/app/data:ro
+
+  client3:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: fl-client-3
+    env_file:
+      - examples/client3.env.example
+    environment:
+      CLIENT_SERVER_ADDRESS: server:45678
+      CLIENT_CONTROL_PORT: "8013"
+      SERVER_CONTROL_URL: http://control-api:8000
+    depends_on:
+      server:
+        condition: service_started
+    ports:
+      - "8013:8013"
+    volumes:
+      - ./data:/app/data:ro
+
+volumes:
+  models_data:
+  logs_data:
+  redis_data:
