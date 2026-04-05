@@ -37,8 +37,7 @@ MODEL_DIR = _get_env("MODEL_DIR", "./models")
 ARTIFACT_DIR = _get_env("ARTIFACT_DIR", MODEL_DIR)
 LOG_DIR = _get_env("LOG_DIR", "./logs")
 TRAINING_LOG_PATH = _get_env("TRAINING_LOG_PATH", os.path.join(LOG_DIR, "server-training.log"))
-CONTROL_API_LOG_PATH = _get_env("CONTROL_API_LOG_PATH", os.path.join(LOG_DIR, "server-control-api.log"))
-INFERENCE_API_LOG_PATH = _get_env("INFERENCE_API_LOG_PATH", os.path.join(LOG_DIR, "server-inference-api.log"))
+MODEL_API_LOG_PATH = _get_env("MODEL_API_LOG_PATH", os.path.join(LOG_DIR, "server-model-api.log"))
 
 # Federated learning params
 NUM_CLIENTS = get_int("NUM_CLIENTS", 3)
@@ -97,15 +96,10 @@ TLS_CLIENT_CERT = os.getenv("TLS_CLIENT_CERT")
 TLS_CLIENT_KEY = os.getenv("TLS_CLIENT_KEY")
 AUTH_TOKEN = os.getenv("AUTH_TOKEN")
 
-# Control API
-CONTROL_API_HOST = _get_env("CONTROL_API_HOST", "0.0.0.0")
-CONTROL_API_PORT = get_int("CONTROL_API_PORT", 8000)
-CONTROL_API_URL = _get_env("CONTROL_API_URL", f"http://127.0.0.1:{CONTROL_API_PORT}")
-
-# Inference API
-INFERENCE_API_HOST = _get_env("INFERENCE_API_HOST", "0.0.0.0")
-INFERENCE_API_PORT = get_int("INFERENCE_API_PORT", 8001)
-INFERENCE_API_URL = _get_env("INFERENCE_API_URL", f"http://127.0.0.1:{INFERENCE_API_PORT}")
+# Model API
+MODEL_API_HOST = _get_env("MODEL_API_HOST", "0.0.0.0")
+MODEL_API_PORT = get_int("MODEL_API_PORT", 8000)
+MODEL_API_URL = _get_env("MODEL_API_URL", f"http://127.0.0.1:{MODEL_API_PORT}")
 
 # Redis
 REDIS_ENABLED = get_bool("REDIS_ENABLED", False)
