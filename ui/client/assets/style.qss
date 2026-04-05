@@ -1,0 +1,40 @@
+QMainWindow {
+    background-color: #f8fafc;
+}
+#Sidebar {
+    background-color: white;
+    border-right: 1px solid #e2e8f0;
+    min-width: 250px;
+}
+#Topbar {
+    background-color: white;
+    border-bottom: 1px solid #e2e8f0;
+    min-height: 60px;
+}
+.GlassCard {
+    background-color: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+}
+.SidebarItem {
+    text-align: left;
+    padding: 10px;
+    border-radius: 8px;
+    font-weight: 500;
+    color: #475569;
+    border: none;
+}
+.SidebarItem:hover {
+    background-color: #f1f5f9;
+}
+.SidebarItem[active="true"] {
+    background-color: #0d9488;
+    color: white;
+}
+.PrimaryButton {
+    background-color: #0d9488;
+    color: white;
+    font-weight: bold;
+    border-radius: 8px;
+    padding: 10px;
+}

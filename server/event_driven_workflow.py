@@ -4,7 +4,7 @@ import time
 import timeit
 import logging
 from logging import INFO
-from typing import Any
+from typing import Any, Callable, Optional
 
 from flwr.common import ConfigsRecord, Context
 from flwr.common.logger import log
@@ -31,11 +31,32 @@ class EventDrivenWorkflow:
         fit_workflow: Any | None = None,
         evaluate_workflow: Any | None = None,
         idle_sleep: float = 1.0,
+        # ------------------------------------------------------------------
+        # Optional UI callback hooks — all default to None (no-op).
+        # The UI injects lambdas here; headless usage is unaffected.
+        # ------------------------------------------------------------------
+        on_status_changed: Optional[Callable[[str, int], None]] = None,
+        on_round_start: Optional[Callable[[int], None]] = None,
+        on_round_end: Optional[Callable[[int, bool], None]] = None,
+        on_session_complete: Optional[Callable[[int, int], None]] = None,
     ) -> None:
         self.fit_workflow = fit_workflow or default_fit_workflow
         self.evaluate_workflow = evaluate_workflow or default_evaluate_workflow
         self.idle_sleep = idle_sleep
         self.state_store = get_state_store()
+        # UI callbacks
+        self._on_status_changed = on_status_changed
+        self._on_round_start = on_round_start
+        self._on_round_end = on_round_end
+        self._on_session_complete = on_session_complete
+
+    def _cb_status(self, status: str, round_: int) -> None:
+        """Fire the status-changed callback if one is registered."""
+        if self._on_status_changed is not None:
+            try:
+                self._on_status_changed(status, round_)
+            except Exception as exc:
+                LOGGER.debug("on_status_changed callback error: %s", exc)
 
     def __call__(self, driver: Driver, context: Context) -> None:
         if not isinstance(context, LegacyContext):
@@ -46,9 +67,11 @@ class EventDrivenWorkflow:
         try:
             self.state_store.set_training_started_at()
             self.state_store.set_training_status("initializing")
+            self._cb_status("initializing", 0)
             log(INFO, "[INIT]")
             default_init_params_workflow(driver, context)
             self.state_store.set_training_status("idle")
+            self._cb_status("idle", 0)
 
             cfg = ConfigsRecord()
             cfg[WorkflowKey.START_TIME] = timeit.default_timer()
@@ -67,6 +90,7 @@ class EventDrivenWorkflow:
                 desired_status = self.state_store.get_desired_training_status()
                 if desired_status != "running":
                     self.state_store.set_training_status(desired_status)
+                    self._cb_status(desired_status, current_round)
                     LOGGER.info("Training loop waiting because desired status is %s", desired_status)
                     time.sleep(self.idle_sleep)
                     idle_time = 0.0
@@ -128,6 +152,12 @@ class EventDrivenWorkflow:
                 cfg[WorkflowKey.CURRENT_ROUND] = current_round
                 self.state_store.set_training_round(current_round)
                 self.state_store.set_training_status("running")
+                self._cb_status("running", current_round)
+                if self._on_round_start is not None:
+                    try:
+                        self._on_round_start(current_round)
+                    except Exception as exc:
+                        LOGGER.debug("on_round_start callback error: %s", exc)
                 log(INFO, "")
                 log(INFO, "[ROUND %s]", current_round)
 
@@ -144,7 +174,13 @@ class EventDrivenWorkflow:
                         "A new %s-round session will begin from the latest checkpoint.",
                         target_rounds,
                     )
+                    if self._on_round_end is not None:
+                        try:
+                            self._on_round_end(current_round, False)
+                        except Exception as cb_exc:
+                            LOGGER.debug("on_round_end callback error: %s", cb_exc)
                     self.state_store.set_training_status("idle")
+                    self._cb_status("idle", 0)
                     current_round = 0
                     _is_cold_start = False  # restart — skip quorum window
                     self.state_store.set_training_round(0)
@@ -152,6 +188,12 @@ class EventDrivenWorkflow:
                         context.strategy.abort_training_session()
                     time.sleep(self.idle_sleep)
                     continue
+
+                if self._on_round_end is not None and round_success:
+                    try:
+                        self._on_round_end(current_round, True)
+                    except Exception as cb_exc:
+                        LOGGER.debug("on_round_end callback error: %s", cb_exc)
 
                 if round_success and current_round >= target_rounds:
                     if hasattr(context.strategy, "complete_training_session"):
@@ -161,13 +203,20 @@ class EventDrivenWorkflow:
                             target_rounds,
                             len(completed_hashes),
                         )
+                        if self._on_session_complete is not None:
+                            try:
+                                self._on_session_complete(1, target_rounds)
+                            except Exception as cb_exc:
+                                LOGGER.debug("on_session_complete callback error: %s", cb_exc)
                     current_round = 0
                     _is_cold_start = True   # next session is a fresh cold start
                     last_session_end_time = timeit.default_timer()
                     self.state_store.set_training_started_at()
                     self.state_store.set_training_round(0)
                 self.state_store.set_training_status("idle")
+                self._cb_status("idle", current_round)
         finally:
             self.state_store.set_training_status("stopped")
+            self._cb_status("stopped", 0)
             f_stop.set()
             thread.join()

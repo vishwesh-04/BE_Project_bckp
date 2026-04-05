@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-from typing import Any
+from typing import Any, Callable, Optional
 
 import numpy as np
 import torch
@@ -33,6 +33,14 @@ class FLClientRuntime(NumPyClient):
         test_path: str,
         algo: NeuralNetworkAlgo,
         use_personalization: bool = False,
+        # ------------------------------------------------------------------
+        # Optional UI callback hooks — call notification to the Client UI.
+        # on_training_start(): called when fit() begins a local training run.
+        # on_training_end(success: bool): called when fit() completes/fails.
+        # Both default to None; headless usage is completely unaffected.
+        # ------------------------------------------------------------------
+        on_training_start: Optional[Callable[[], None]] = None,
+        on_training_end: Optional[Callable[[bool], None]] = None,
     ):
         self.client_id = str(client_id)
         self.train_path = train_path
@@ -41,6 +49,8 @@ class FLClientRuntime(NumPyClient):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_personalization = use_personalization
         self.is_training = False
+        self._on_training_start = on_training_start
+        self._on_training_end = on_training_end
 
     def _data_hash(self) -> str:
         if not self.train_path or not os.path.exists(self.train_path):
@@ -168,16 +178,33 @@ class FLClientRuntime(NumPyClient):
         data_hash = self._data_hash()
 
         self.is_training = True
+        if self._on_training_start is not None:
+            try:
+                self._on_training_start()
+            except Exception as exc:
+                LOGGER.debug("on_training_start callback error: %s", exc)
         try:
             base_weights = [np.asarray(layer, dtype=np.float32) for layer in parameters]
             self.algo.set_weights(base_weights)
             x_data, _ = self._train_model(self.train_path, data_hash=data_hash)
             trained_weights = self.algo.get_weights()
+            if self._on_training_end is not None:
+                try:
+                    self._on_training_end(True)
+                except Exception as exc:
+                    LOGGER.debug("on_training_end callback error: %s", exc)
             return trained_weights, len(x_data), {
                 "skipped": False,
                 "status": "trained",
                 "data_hash": data_hash,
             }
+        except Exception:
+            if self._on_training_end is not None:
+                try:
+                    self._on_training_end(False)
+                except Exception as exc:
+                    LOGGER.debug("on_training_end callback error: %s", exc)
+            raise
         finally:
             self.is_training = False
 

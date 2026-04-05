@@ -1,3 +1,4 @@
+import argparse
 import os
 import platform
 import subprocess
@@ -39,6 +40,7 @@ def _supernode_command(project_root: str, python_exec: str, client_id: str, pers
 
 
 def run_simulation():
+    """Headless fallback: spawns all FL processes into system terminals (original behaviour)."""
     python_exec = sys.executable
     current_os = platform.system()
     project_root = os.path.abspath(os.getcwd())
@@ -94,6 +96,48 @@ def run_simulation():
     LOGGER.info("All terminals launched. Monitor windows for logs.")
 
 
+def _run_server_ui(extra_args: list[str]) -> int:
+    """Launch the Server desktop application."""
+    # Ensure project root is on path before importing
+    root = os.path.abspath(os.path.dirname(__file__))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from ui.server_ui.main import main as server_main
+    return server_main(extra_args)
+
+
+def _run_client_ui(extra_args: list[str]) -> int:
+    """Launch the Client desktop application."""
+    root = os.path.abspath(os.path.dirname(__file__))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from ui.client_ui.main import main as client_main
+    return client_main(extra_args)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
+
+    # ---------------------------------------------------------------
+    # CLI: check for --ui / --server-ui / --client-ui flags BEFORE
+    # passing the remaining args to argparse so existing scripts that
+    # call main.py without flags keep working unchanged.
+    # ---------------------------------------------------------------
+    _argv = sys.argv[1:]
+
+    if "--server-ui" in _argv:
+        _argv.remove("--server-ui")
+        sys.exit(_run_server_ui(_argv))
+
+    if "--client-ui" in _argv:
+        _argv.remove("--client-ui")
+        sys.exit(_run_client_ui(_argv))
+
+    if "--ui" in _argv:
+        # --ui without --server-ui or --client-ui defaults to the server
+        _argv.remove("--ui")
+        LOGGER.info("--ui flag detected — launching Server UI (use --client-ui for client).")
+        sys.exit(_run_server_ui(_argv))
+
+    # Default: original headless simulation
     run_simulation()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from logging import WARNING
-from typing import Any
+from typing import Any, Callable, Optional
 
 from flwr.common import (
     FitIns,
@@ -45,6 +45,12 @@ class FeatureParityFedAvg(FedAvg):
         artifact_dir: str = ARTIFACT_DIR,
         reference_data_path: str | None = None,
         dashboard_feature_keys: list[str] | None = None,
+        # ------------------------------------------------------------------
+        # Optional UI callback — called after each model artifact is saved.
+        # Signature: on_model_updated(version: str, metrics_json: str)
+        # Defaults to None; headless usage is unaffected.
+        # ------------------------------------------------------------------
+        on_model_updated: Optional[Callable[[str, str], None]] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -61,6 +67,7 @@ class FeatureParityFedAvg(FedAvg):
             self.reference_data_path,
             self.dashboard_feature_keys,
         )
+        self._on_model_updated = on_model_updated
 
     def _get_client_id(self, client: ClientProxy, fallback: str = "unknown") -> str:
         return str(getattr(client, "cid", getattr(client, "node_id", fallback)))
@@ -96,7 +103,15 @@ class FeatureParityFedAvg(FedAvg):
             "model_parameter_count": len(self.latest_parameters),
         }
         save_global_artifact(self.latest_parameters, metadata, artifact_dir=self.artifact_dir)
-        self.state_store.register_model(f"v{server_round}", metadata)
+        version = f"v{server_round}"
+        self.state_store.register_model(version, metadata)
+        # Fire UI callback if registered
+        if self._on_model_updated is not None:
+            try:
+                import json
+                self._on_model_updated(version, json.dumps({k: v for k, v in metrics.items() if isinstance(v, (int, float, str, bool))}))
+            except Exception as exc:
+                LOGGER.debug("on_model_updated callback error: %s", exc)
 
     def initialize_parameters(self, client_manager: ClientManager) -> Parameters | None:
         parameters = super().initialize_parameters(client_manager)
