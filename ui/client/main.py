@@ -8,9 +8,10 @@ import os
 
 from ui.widgets.ConfigurationTab import ConfigurationTab
 from ui.widgets.InferenceTab import InferenceTab
+from ui.widgets.InsightsTab import InsightsTab
 from ui.widgets.Sidebar import Sidebar
 
-if os.getenv("DEV_MODE") == 0:
+if os.getenv("DEV_MODE") == "0":
     import resources_rc
 
 
@@ -36,14 +37,16 @@ class ClientUi(QMainWindow):
 
         self.config_tab = ConfigurationTab()
         self.inference_tab = InferenceTab()
+        self.insights_tab = InsightsTab()
 
         # Add Tabs
         self.content_stack.addWidget(self.config_tab)
         self.content_stack.addWidget(self.inference_tab)
-        self.content_stack.addWidget(QLabel("Insights Tab (Placeholder)"))
+        self.content_stack.addWidget(self.insights_tab)
 
         # Sidebar
-        self.sidebar = Sidebar(self.content_stack)
+        self.sidebar = Sidebar()
+        self.sidebar.nav_clicked.connect(self.content_stack.setCurrentIndex)
 
         # Main Content Area (Topbar + Stack)
         right_container = QWidget()

@@ -226,14 +226,24 @@ class InferenceTab(QWidget):
         verify_btn.clicked.connect(lambda: self._on_row_selected(self.table.item(row, 0)))
         self.table.setCellWidget(row, 3, verify_btn)
 
+    def _clear_layout(self, layout):
+        """Recursively clears widgets, sub-layouts, and spacers from a layout."""
+        if layout is not None:
+            while layout.count():
+                item = layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+                else:
+                    self._clear_layout(item.layout())
+
     def _on_row_selected(self, item):
         """Populates the detail drawer when a row is selected."""
         row = item.row()
         patient_id = self.table.item(row, 0).text()
 
-        # Clear old evidence
-        for i in reversed(range(self.evidence_layout.count())):
-            self.evidence_layout.itemAt(i).widget().setParent(None)
+        # Safely clear all old widgets, sub-layouts, and spacers
+        self._clear_layout(self.evidence_layout)
 
         self.drawer_title.setText(f"Analysis: {patient_id}")
 

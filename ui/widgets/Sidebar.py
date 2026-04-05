@@ -1,12 +1,13 @@
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel, QPushButton, QProgressBar, QHBoxLayout, QButtonGroup
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 
 class Sidebar(QFrame):
-    def __init__(self, stack):  # Added 'stack' argument to control the QStackedWidget
+    nav_clicked = Signal(int)
+
+    def __init__(self):
         super().__init__()
         self.setObjectName("Sidebar")
-        self.stack = stack  # Store reference to the stack
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 25, 15, 25)
@@ -34,8 +35,8 @@ class Sidebar(QFrame):
             # Add the button to the group and give it an ID that matches the stack index
             self.button_group.addButton(btn, i)
 
-        # Connect the group clicking to the stack index switching
-        self.button_group.idClicked.connect(self.stack.setCurrentIndex)
+        # Connect the group clicking to our custom signal
+        self.button_group.idClicked.connect(self.nav_clicked.emit)
 
         # Set the first button as active by default
         if self.button_group.button(0):
