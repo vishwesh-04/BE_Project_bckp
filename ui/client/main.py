@@ -1,20 +1,19 @@
 import sys
+import os
 
 from PySide6.QtWidgets import *
-
-from PySide6.QtCore import Qt, Signal, Slot, QFile, QTextStream
-
-import os
+from PySide6.QtCore import Qt, QFile, QTextStream, QThread
 
 from ui.widgets.ConfigurationTab import ConfigurationTab
 from ui.widgets.InferenceTab import InferenceTab
 from ui.widgets.InsightsTab import InsightsTab
 from ui.widgets.Sidebar import Sidebar
 
+# Import the controller we just created
+from ui.client.controller import FLWorker
+
 if os.getenv("DEV_MODE") == "0":
     import resources_rc
-
-
 
 
 class ClientUi(QMainWindow):
@@ -24,6 +23,12 @@ class ClientUi(QMainWindow):
         self.setWindowTitle("MedLink FL Dashboard")
         self.resize(1100, 700)
         self.load_resources()
+
+        # Initialize background worker and thread
+        self.worker_thread = QThread()
+        self.fl_worker = FLWorker()
+        self.fl_worker.moveToThread(self.worker_thread)
+        self.worker_thread.start()
 
         # Central Widget & Main Horizontal Layout
         central_widget = QWidget()
@@ -38,6 +43,18 @@ class ClientUi(QMainWindow):
         self.config_tab = ConfigurationTab()
         self.inference_tab = InferenceTab()
         self.insights_tab = InsightsTab()
+
+        # Wire up Controller to the Tabs
+        # 1. Configuration Tab (Sync + Real-time Training Status)
+        self.config_tab.sync_requested.connect(self.fl_worker.start_fl_client)
+        self.fl_worker.training_started.connect(self.config_tab.on_training_started)
+        self.fl_worker.training_ended.connect(self.config_tab.on_training_ended)
+        self.fl_worker.fl_client_stopped.connect(self.config_tab.on_fl_client_stopped)
+        self.fl_worker.log_message.connect(self.config_tab.append_log)
+        
+        # 2. Inference Tab (Prediction via background model)
+        self.inference_tab.predict_requested.connect(self.fl_worker.run_prediction)
+        self.fl_worker.prediction_result.connect(self.inference_tab.display_prediction_result)
 
         # Add Tabs
         self.content_stack.addWidget(self.config_tab)
@@ -58,7 +75,7 @@ class ClientUi(QMainWindow):
         topbar_layout = QHBoxLayout(topbar)
         topbar_layout.addWidget(QLabel("Node Configuration"))
         topbar_layout.addStretch()
-        topbar_layout.addWidget(QLabel("NODE_HOSP_001"))
+        topbar_layout.addWidget(QLabel(f"NODE_{os.environ.get('CLIENT_ID', 'DEFAULT')}"))
 
         right_layout.addWidget(topbar)
         right_layout.addWidget(self.content_stack)
@@ -87,10 +104,11 @@ class ClientUi(QMainWindow):
             except FileNotFoundError:
                 print(f"❌ Error: Still can't find {qss_path}")
 
-
-
-
-
+    def closeEvent(self, event):
+        # Cleanup thread gracefully when window closes
+        self.worker_thread.quit()
+        self.worker_thread.wait()
+        event.accept()
 
 
 if __name__ == '__main__':

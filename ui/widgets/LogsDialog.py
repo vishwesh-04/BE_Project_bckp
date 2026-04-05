@@ -52,16 +52,5 @@ class LogsDialog(QDialog):
         self.terminal.setFont(font)
 
         layout.addWidget(self.terminal)
-        self.add_mock_logs()
-
-    def add_mock_logs(self):
-        logs = """
-        <div style="color: #64748b; margin-bottom: 10px;">-- Session Started: Round 14 --</div>
-        <div style="color: #38bdf8;">[SYSTEM] GPU Memory Allocated: 4.2GB / 8.0GB</div>
-        <div style="color: #f8fafc;">[INFO] Loading local dataset: client_1_train.csv</div>
-        <div style="color: #4ade80;">[EPOCH 1/3] Loss: 0.421 | Acc: 0.782 | Time: 142s</div>
-        <div style="color: #4ade80;">[EPOCH 2/3] Loss: 0.385 | Acc: 0.815 | Time: 139s</div>
-        <div style="color: #4ade80;">[EPOCH 3/3] Loss: 0.352 | Acc: 0.841 | Time: 140s</div>
-        <div style="color: #38bdf8; margin-top: 10px;">[INFO] Local weights encrypted. Waiting for server aggregation...</div>
-        """
-        self.terminal.setHtml(logs)
+    def append_log(self, html_str):
+        self.terminal.append(html_str)

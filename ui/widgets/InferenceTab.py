@@ -1,14 +1,18 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                QLabel, QLineEdit, QPushButton, QTableWidget,
                                QTableWidgetItem, QHeaderView, QAbstractItemView,
-                               QScrollArea)
-from PySide6.QtCore import Qt, Signal
+                               QScrollArea, QMessageBox)
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QColor, QFont
 
+
+from client.inference_engine import PredictionResult
 
 class InferenceTab(QWidget):
     # Future-proofing: Signal to tell the wrapper to verify a record
     verify_requested = Signal(str, bool)  # patient_id, is_correct
+    # Signal to request a prediction
+    predict_requested = Signal(dict)
 
     def __init__(self):
         super().__init__()
@@ -46,21 +50,24 @@ class InferenceTab(QWidget):
         title.setStyleSheet("font-weight: bold; color: #1e293b; font-size: 13px;")
         v_layout.addWidget(title)
 
-        for label in ["BLOOD GLUCOSE (MG/DL)", "AGE FACTOR", "BMI VALUE"]:
-            l = QLabel(label)
+        self.inputs = {}
+        for key, text in [("glucose", "BLOOD GLUCOSE (MG/DL)"), ("age", "AGE FACTOR"), ("bmi", "BMI VALUE")]:
+            l = QLabel(text)
             l.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: bold;")
             edit = QLineEdit()
             edit.setPlaceholderText("e.g. ...")
             edit.setProperty("class", "EnvInput")
             v_layout.addWidget(l)
             v_layout.addWidget(edit)
+            self.inputs[key] = edit
 
-        predict_btn = QPushButton("PREDICT FOR PATIENT")
-        predict_btn.setStyleSheet("""
+        self.predict_btn = QPushButton("PREDICT FOR PATIENT")
+        self.predict_btn.setStyleSheet("""
             background-color: #1e293b; color: white; font-weight: bold; 
             padding: 12px; border-radius: 8px; margin-top: 5px;
         """)
-        v_layout.addWidget(predict_btn)
+        self.predict_btn.clicked.connect(self._emit_predict)
+        v_layout.addWidget(self.predict_btn)
         v_layout.addStretch()
         self.left_col.addWidget(card)
 
@@ -275,3 +282,48 @@ class InferenceTab(QWidget):
 
         self.evidence_layout.addStretch()
         self.detail_drawer.show()
+
+    def _emit_predict(self):
+        try:
+            val_map = {
+                "glucose": float(self.inputs["glucose"].text() or 0.0),
+                "age": float(self.inputs["age"].text() or 0.0),
+                "bmi": float(self.inputs["bmi"].text() or 0.0),
+            }
+            self.predict_btn.setText("PREDICTING...")
+            self.predict_btn.setDisabled(True)
+            self.predict_requested.emit(val_map)
+        except ValueError:
+             QMessageBox.warning(self, "Invalid Input", "Please enter valid numbers.")
+
+    @Slot(object)
+    def display_prediction_result(self, result):
+        self.predict_btn.setText("PREDICT FOR PATIENT")
+        self.predict_btn.setDisabled(False)
+
+        if isinstance(result, Exception):
+            QMessageBox.critical(self, "Prediction Error", str(result))
+            return
+            
+        res: PredictionResult = result
+        
+        # Display the result. For now, add it as a top row to the warehouse table.
+        # In a real app this would go to a specific "Recent Results" area or alert.
+        color = "#059669" if res.risk_label == "Low" else "#dc2626"
+        self.table.insertRow(0)
+        self.table.setItem(0, 0, QTableWidgetItem("Manual-Entry"))
+        self.table.setItem(0, 1, QTableWidgetItem(f"Prob: {res.probability:.2f}"))
+        
+        status_item = QTableWidgetItem(res.risk_label)
+        status_item.setForeground(QColor(color))
+        font = status_item.font()
+        font.setBold(True)
+        status_item.setFont(font)
+        self.table.setItem(0, 2, status_item)
+        
+        # We could also use QMessageBox to explicitly inform the user right now
+        QMessageBox.information(
+            self, 
+            "Prediction Complete", 
+            f"Risk Label: {res.risk_label}\nProbability: {res.probability:.2%}\n\n{res.summary}"
+        )

@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                QLabel, QLineEdit, QPushButton)
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, Slot
 from ui.widgets.DashboardCard import DashboardCard
 from ui.widgets.LogsDialog import LogsDialog
 
@@ -8,6 +8,8 @@ from ui.widgets.LogsDialog import LogsDialog
 class ConfigurationTab(QWidget):
     # Signal emitted when the server address is successfully updated
     server_updated = Signal(str)
+    # Signal to request starting the FL Client node
+    sync_requested = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -15,6 +17,8 @@ class ConfigurationTab(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(30, 30, 30, 30)
         self.layout.setSpacing(25)
+        
+        self.logs_dialog = LogsDialog(self)
 
         # 1. Stats Row (Top)
         self._init_stats_row()
@@ -54,8 +58,38 @@ class ConfigurationTab(QWidget):
 
     def show_logs(self):
         """Slot to open the logs dialog."""
-        dialog = LogsDialog(self)
-        dialog.exec()
+        self.logs_dialog.show()
+
+    @Slot(str)
+    def append_log(self, msg: str):
+        color = "#f8fafc"
+        if "ERROR" in msg or "Exception" in msg: color = "#ef4444"
+        elif "WARNING" in msg: color = "#f59e0b"
+        elif "INFO" in msg or "SYSTEM" in msg: color = "#38bdf8"
+        
+        # Replace newlines with <br> for HTML rendering
+        msg_html = msg.replace('\n', '<br>')
+        html = f'<div style="color: {color}; margin-bottom: 4px;">{msg_html}</div>'
+        self.logs_dialog.append_log(html)
+
+    @Slot()
+    def on_training_started(self):
+        self.training_card.update_content("Status: Training", "Training local model...", "#f59e0b")
+
+    @Slot(bool)
+    def on_training_ended(self, success: bool):
+        if success:
+            self.training_card.update_content("Status: Round Complete", "Weights synchronized", "#0d9488")
+        else:
+            self.training_card.update_content("Status: Failed", "Training encountered an error", "#ef4444")
+
+    @Slot(bool, str)
+    def on_fl_client_stopped(self, success: bool, message: str):
+        if success:
+            self.training_card.update_content("Status: Idle", "Ready for next round", "#3b82f6")
+        else:
+            self.training_card.update_content("Status: Error", "Connection failed. Check logs.", "#ef4444")
+            self.append_log(f"[ERROR] {message}")
 
     def _init_server_card(self):
         """Creates the card for setting the Federated Server URL."""
@@ -145,12 +179,29 @@ class ConfigurationTab(QWidget):
         sync_btn.setProperty("class", "PrimaryButton")
         sync_btn.setFixedHeight(50)
         sync_btn.setCursor(Qt.PointingHandCursor)
+        sync_btn.clicked.connect(self._emit_sync)
 
         btn_layout.addWidget(sync_btn)
         self.layout.addLayout(btn_layout)
+
+    def _emit_sync(self):
+        url = self.server_input.text().strip()
+        # Clean up URL for gRPC (Flower expects host:port, not http/https)
+        url = url.replace("https://", "").replace("http://", "")
+        if url.endswith("/v1"):
+             url = url.replace("/v1", "")
+
+        if ":" not in url:
+             url = url + ":8080" # Default flower port
+
+        print(f"[SYSTEM] Requesting sync to: {url}")
+        self.training_card.update_content("Status: Connecting...", f"To {url}", "#f59e0b")
+        self.sync_requested.emit(url)
 
     def handle_server_change(self):
         """Handles updating the server endpoint."""
         new_url = self.server_input.text()
         print(f"[SYSTEM] Server address set to: {new_url}")
         self.server_updated.emit(new_url)
+        # Also automatically request sync when endpoint is set
+        self._emit_sync()

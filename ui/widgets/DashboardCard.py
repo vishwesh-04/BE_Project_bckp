@@ -15,16 +15,16 @@ class DashboardCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        title_lbl = QLabel(title.upper())
-        title_lbl.setProperty("class", "CardTitle")
+        self.title_lbl = QLabel(title.upper())
+        self.title_lbl.setProperty("class", "CardTitle")
 
-        value_lbl = QLabel(value)
-        value_lbl.setProperty("class", "CardValue")
+        self.value_lbl = QLabel(value)
+        self.value_lbl.setProperty("class", "CardValue")
 
         sub_layout = QHBoxLayout()
-        sub_lbl = QLabel(subtext)
-        sub_lbl.setStyleSheet(f"color: {border_color}; font-weight: bold; font-size: 11px;")
-        sub_layout.addWidget(sub_lbl)
+        self.sub_lbl = QLabel(subtext)
+        self.sub_lbl.setStyleSheet(f"color: {border_color}; font-weight: bold; font-size: 11px;")
+        sub_layout.addWidget(self.sub_lbl)
 
         if link_text:
             link = QLabel(link_text)
@@ -33,13 +33,19 @@ class DashboardCard(QFrame):
 
         sub_layout.addStretch()
 
-        layout.addWidget(title_lbl)
-        layout.addWidget(value_lbl)
+        layout.addWidget(self.title_lbl)
+        layout.addWidget(self.value_lbl)
         layout.addLayout(sub_layout)
 
         for i in range(layout.count()):
             widget = layout.itemAt(i).widget()
             if widget: widget.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    def update_content(self, title, value, border_color="#0d9488"):
+        self.title_lbl.setText(title.upper())
+        self.value_lbl.setText(value)
+        self.setStyleSheet(f"border-left: 4px solid {border_color};")
+        self.sub_lbl.setStyleSheet(f"color: {border_color}; font-weight: bold; font-size: 11px;")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
