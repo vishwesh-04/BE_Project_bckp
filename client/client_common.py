@@ -12,11 +12,8 @@ from flwr.client import NumPyClient
 from torch.utils.data import DataLoader, TensorDataset
 
 from common.config import (
-    BATCH_SIZE,
     CLIENT_DP_ENABLED,
     L2_NORM_CLIP,
-    LEARNING_RATE,
-    LOCAL_EPOCHS,
     NOISE_MULTIPLIER,
 )
 from common.data_loader import load_local_data  # moved to common/
@@ -33,6 +30,9 @@ class FLClientRuntime(NumPyClient):
         test_path: str,
         algo: NeuralNetworkAlgo,
         use_personalization: bool = False,
+        local_epochs: int = 3,
+        batch_size: int = 32,
+        learning_rate: float = 0.001,
         # ------------------------------------------------------------------
         # Optional UI callback hooks — call notification to the Client UI.
         # on_training_start(): called when fit() begins a local training run.
@@ -48,7 +48,11 @@ class FLClientRuntime(NumPyClient):
         self.algo = algo
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_personalization = use_personalization
+        self.local_epochs = local_epochs
+        self.batch_size = batch_size
+        self.learning_rate = learning_rate
         self.is_training = False
+        self.stop_requested = False
         self._on_training_start = on_training_start
         self._on_training_end = on_training_end
 
@@ -62,6 +66,9 @@ class FLClientRuntime(NumPyClient):
         return digest.hexdigest()
 
     def _ready_state(self) -> tuple[bool, str]:
+        if self.stop_requested:
+            return False, "muted_by_sidecar"
+            
         ready_file = os.getenv("READY_FILE_PATH", "/tmp/client_ready.json")
         if os.path.exists(ready_file):
             try:
@@ -93,8 +100,8 @@ class FLClientRuntime(NumPyClient):
         return self.algo.get_weights()
 
     def _make_private_loader(self, dataset: TensorDataset, seed: int | None = None):
-        train_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
-        optimizer = torch.optim.Adam(self.algo.model.parameters(), lr=LEARNING_RATE)
+        train_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        optimizer = torch.optim.Adam(self.algo.model.parameters(), lr=self.learning_rate)
         if not CLIENT_DP_ENABLED:
             return self.algo.model, optimizer, train_loader
 
@@ -127,7 +134,10 @@ class FLClientRuntime(NumPyClient):
 
         model.train()
         criterion = nn.BCELoss()
-        for _ in range(LOCAL_EPOCHS):
+        for _ in range(self.local_epochs):
+            if self.stop_requested:
+                # If paused mid-training, stop gracefully but don't crash
+                break
             for batch_x, batch_y in train_loader:
                 batch_x = batch_x.to(self.device)
                 batch_y = batch_y.to(self.device)
@@ -137,7 +147,7 @@ class FLClientRuntime(NumPyClient):
                 loss.backward()
                 optimizer.step()
 
-        if self.use_personalization:
+        if self.use_personalization and not self.stop_requested:
             self._personalize_head(dataset)
 
         return x_data, y_data
@@ -150,9 +160,9 @@ class FLClientRuntime(NumPyClient):
 
         optimizer = torch.optim.Adam(
             filter(lambda param: param.requires_grad, self.algo.model.parameters()),
-            lr=LEARNING_RATE,
+            lr=self.learning_rate,
         )
-        loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+        loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
         criterion = nn.BCELoss()
         self.algo.model.train()
         for batch_x, batch_y in loader:
@@ -173,8 +183,6 @@ class FLClientRuntime(NumPyClient):
             return self.algo.get_weights(), 0, {"skipped": True, "status": status}
 
         # Compute the hash exactly once — used for DP seeding AND returned in metrics.
-        # Computing it twice would double the file I/O and risk an inconsistent value if
-        # the dataset file changes between reads.
         data_hash = self._data_hash()
 
         self.is_training = True
@@ -209,6 +217,10 @@ class FLClientRuntime(NumPyClient):
             self.is_training = False
 
     def evaluate(self, parameters, config: dict[str, Any]):
+        ready, status = self._ready_state()
+        if not ready:
+            return 0.0, 0, {"accuracy": 0.0, "skipped": True, "status": status}
+
         self.algo.set_weights(parameters)
         loss, acc = self.algo.test(self.test_path)
         _, y_data = load_local_data(self.test_path)

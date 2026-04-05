@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt, QFile, QTextStream, QThread
@@ -47,9 +48,14 @@ class ClientUi(QMainWindow):
         # Wire up Controller to the Tabs
         # 1. Configuration Tab (Sync + Real-time Training Status)
         self.config_tab.sync_requested.connect(self.fl_worker.start_fl_client)
+        self.config_tab.stop_requested.connect(self.fl_worker.stop_fl_client)
         self.fl_worker.training_started.connect(self.config_tab.on_training_started)
         self.fl_worker.training_ended.connect(self.config_tab.on_training_ended)
+        
+        # Connect client started signal to UI
+        self.fl_worker.fl_client_started.connect(self.config_tab.on_fl_client_started)
         self.fl_worker.fl_client_stopped.connect(self.config_tab.on_fl_client_stopped)
+        
         self.fl_worker.log_message.connect(self.config_tab.append_log)
         
         # 2. Inference Tab (Prediction via background model)
@@ -75,7 +81,16 @@ class ClientUi(QMainWindow):
         topbar_layout = QHBoxLayout(topbar)
         topbar_layout.addWidget(QLabel("Node Configuration"))
         topbar_layout.addStretch()
-        topbar_layout.addWidget(QLabel(f"NODE_{os.environ.get('CLIENT_ID', 'DEFAULT')}"))
+        
+        # Ready Toggle
+        self.ready_toggle = QCheckBox("Ready")
+        self.ready_toggle.setChecked(True)
+        self.ready_toggle.setToolTip("Toggle to pause/resume participating in federated rounds.")
+        self.ready_toggle.toggled.connect(self.on_ready_toggled)
+        self.ready_toggle.setStyleSheet("font-weight: bold; color: #0d9488;")
+        
+        topbar_layout.addWidget(self.ready_toggle)
+        topbar_layout.addWidget(QLabel(f"  NODE_{os.environ.get('CLIENT_ID', 'DEFAULT')}"))
 
         right_layout.addWidget(topbar)
         right_layout.addWidget(self.content_stack)
@@ -85,6 +100,14 @@ class ClientUi(QMainWindow):
 
         main_layout.setStretch(0, 1)
         main_layout.setStretch(1, 4)
+
+    def on_ready_toggled(self, checked: bool):
+        ready_file = os.getenv("READY_FILE_PATH", "/tmp/client_ready.json")
+        try:
+            with open(ready_file, "w") as f:
+                json.dump({"ready": checked}, f)
+        except Exception as e:
+            print("Failed to write ready file:", e)
 
     def load_resources(self):
         # This gets the directory where main.py actually lives
@@ -106,6 +129,10 @@ class ClientUi(QMainWindow):
 
     def closeEvent(self, event):
         # Cleanup thread gracefully when window closes
+        print("[SYSTEM] Application closing, shutting down workers...")
+        self.fl_worker.stop_fl_client()
+        self.fl_worker.shutdown()
+
         self.worker_thread.quit()
         self.worker_thread.wait()
         event.accept()

@@ -1,6 +1,9 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                QLabel, QLineEdit, QPushButton)
 from PySide6.QtCore import Qt, Signal, Slot
+import torch
+import os
+from common.config import CLIENT_ID
 from ui.widgets.DashboardCard import DashboardCard
 from ui.widgets.LogsDialog import LogsDialog
 
@@ -8,8 +11,10 @@ from ui.widgets.LogsDialog import LogsDialog
 class ConfigurationTab(QWidget):
     # Signal emitted when the server address is successfully updated
     server_updated = Signal(str)
-    # Signal to request starting the FL Client node
-    sync_requested = Signal(str)
+    # Signal to request starting the FL Client node (url, epochs, batch_size, lr)
+    sync_requested = Signal(str, int, int, float)
+    # Signal to gently stop the FL connected node
+    stop_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -50,9 +55,17 @@ class ConfigurationTab(QWidget):
 
         stats_layout.addWidget(self.training_card)
 
+        # 3. Dynamic Hardware checks
+        has_gpu = torch.cuda.is_available()
+        gpu_stat = "GPU Acceleration Active" if has_gpu else "CPU Execution"
+        gpu_color = "#3b82f6" if has_gpu else "#64748b"
+        
+        node_name = os.getenv("CLIENT_ID", CLIENT_ID)
+        node_label = node_name[:12] if node_name else "Unassigned"
+
         # Add the other two (non-interactive or connected elsewhere)
-        stats_layout.addWidget(DashboardCard("Resource Status", "Optimized", "GPU Acceleration Active", "#3b82f6"))
-        stats_layout.addWidget(DashboardCard("Data Quality Alert", "3% Outliers", "View Quality Report", "#f43f5e"))
+        stats_layout.addWidget(DashboardCard("Resource Status", "Active", gpu_stat, gpu_color))
+        stats_layout.addWidget(DashboardCard("Node Identity", node_label, "Connected and Authenticated" if node_name else "Unknown Node", "#f43f5e" if not node_name else "#0d9488"))
 
         self.layout.addLayout(stats_layout)
 
@@ -83,13 +96,39 @@ class ConfigurationTab(QWidget):
         else:
             self.training_card.update_content("Status: Failed", "Training encountered an error", "#ef4444")
 
+    @Slot()
+    def on_fl_client_started(self):
+        self.training_card.update_content("Status: Connected", "Listening for server...", "#0d9488")
+        self._set_ui_state_connected(True)
+
     @Slot(bool, str)
     def on_fl_client_stopped(self, success: bool, message: str):
         if success:
-            self.training_card.update_content("Status: Idle", "Ready for next round", "#3b82f6")
+            if message == "Paused":
+                self.training_card.update_content("Status: Paused", "Not Ready (muted)", "#f59e0b")
+            else:
+                self.training_card.update_content("Status: Idle", "Ready for next round", "#3b82f6")
         else:
             self.training_card.update_content("Status: Error", "Connection failed. Check logs.", "#ef4444")
             self.append_log(f"[ERROR] {message}")
+            
+        self._set_ui_state_connected(False)
+
+    def _set_ui_state_connected(self, connected: bool):
+        if connected:
+            self.set_btn.setText("PAUSE (NOT READY)")
+            self.set_btn.setStyleSheet("background-color: #f59e0b; border-color: #f59e0b; color: white;")
+            self.server_input.setReadOnly(True)
+            self.epochs_input.setReadOnly(True)
+            self.batch_input.setReadOnly(True)
+            self.lr_input.setReadOnly(True)
+        else:
+            self.set_btn.setText("CONNECT/RESUME")
+            self.set_btn.setStyleSheet("")
+            self.server_input.setReadOnly(False)
+            self.epochs_input.setReadOnly(False)
+            self.batch_input.setReadOnly(False)
+            self.lr_input.setReadOnly(False)
 
     def _init_server_card(self):
         """Creates the card for setting the Federated Server URL."""
@@ -104,13 +143,14 @@ class ConfigurationTab(QWidget):
         layout.addWidget(title)
 
         input_row = QHBoxLayout()
-        self.server_input = QLineEdit("https://api.medlink-fl.io/v1")
+        # Updated default network address
+        self.server_input = QLineEdit("127.0.0.1:45678")
         self.server_input.setProperty("class", "EnvInput")
         self.server_input.setPlaceholderText("Enter Federated Server URL...")
         self.server_input.setFixedHeight(40)
 
-        self.set_btn = QPushButton("SET ENDPOINT")
-        self.set_btn.setFixedWidth(120)
+        self.set_btn = QPushButton("CONNECT")
+        self.set_btn.setFixedWidth(160)
         self.set_btn.setFixedHeight(40)
         self.set_btn.setProperty("class", "SecondaryButton")
         self.set_btn.setCursor(Qt.PointingHandCursor)
@@ -148,24 +188,30 @@ class ConfigurationTab(QWidget):
         grid_layout = QHBoxLayout(inputs_widget)
         grid_layout.setSpacing(20)
 
+        self.epochs_input = QLineEdit("3")
+        self.epochs_input.setProperty("class", "EnvInput")
+        
+        self.batch_input = QLineEdit("32")
+        self.batch_input.setProperty("class", "EnvInput")
+        
+        self.lr_input = QLineEdit("0.001")
+        self.lr_input.setProperty("class", "EnvInput")
+
         params = [
-            ("LOCAL EPOCHS", "3"),
-            ("BATCH SIZE", "32"),
-            ("LEARNING RATE", "0.001")
+            ("LOCAL EPOCHS", self.epochs_input),
+            ("BATCH SIZE", self.batch_input),
+            ("LEARNING RATE", self.lr_input)
         ]
 
-        for label_text, default_val in params:
+        for label_text, edit_widget in params:
             v_box = QVBoxLayout()
             v_box.setSpacing(8)
 
             lbl = QLabel(label_text)
             lbl.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 700;")
 
-            edit = QLineEdit(default_val)
-            edit.setProperty("class", "EnvInput")
-
             v_box.addWidget(lbl)
-            v_box.addWidget(edit)
+            v_box.addWidget(edit_widget)
             grid_layout.addLayout(v_box)
 
         card_layout.addWidget(inputs_widget)
@@ -173,16 +219,7 @@ class ConfigurationTab(QWidget):
 
     def _init_action_buttons(self):
         """Creates the primary sync button at the bottom."""
-        btn_layout = QHBoxLayout()
-
-        sync_btn = QPushButton("MANUALLY SYNCHRONIZE WEIGHTS")
-        sync_btn.setProperty("class", "PrimaryButton")
-        sync_btn.setFixedHeight(50)
-        sync_btn.setCursor(Qt.PointingHandCursor)
-        sync_btn.clicked.connect(self._emit_sync)
-
-        btn_layout.addWidget(sync_btn)
-        self.layout.addLayout(btn_layout)
+        pass
 
     def _emit_sync(self):
         url = self.server_input.text().strip()
@@ -199,9 +236,33 @@ class ConfigurationTab(QWidget):
         self.sync_requested.emit(url)
 
     def handle_server_change(self):
-        """Handles updating the server endpoint."""
+        """Handles updating the server endpoint and connecting."""
+        if "PAUSE" in self.set_btn.text():
+            print("[SYSTEM] Pausing participation (Not Ready)")
+            self.stop_requested.emit()
+            return
+            
         new_url = self.server_input.text()
+        try:
+            epochs = int(self.epochs_input.text())
+            batch_size = int(self.batch_input.text())
+            lr = float(self.lr_input.text())
+        except ValueError:
+            self.append_log("[ERROR] Invalid numeric parameters.")
+            return
+
         print(f"[SYSTEM] Server address set to: {new_url}")
         self.server_updated.emit(new_url)
-        # Also automatically request sync when endpoint is set
-        self._emit_sync()
+        
+        # Clean up URL for gRPC (Flower expects host:port, not http/https)
+        url = new_url.replace("https://", "").replace("http://", "")
+        if url.endswith("/v1"):
+             url = url.replace("/v1", "")
+
+        if ":" not in url:
+             url = url + ":8080" # Default flower port
+
+        print(f"[SYSTEM] Requesting sync to: {url}")
+        self.training_card.update_content("Status: Connecting...", f"To {url}", "#f59e0b")
+        
+        self.sync_requested.emit(url, epochs, batch_size, lr)
