@@ -38,3 +38,32 @@ QMainWindow {
     border-radius: 8px;
     padding: 10px;
 }
+
+/* Monospace for the URL looks much more technical and precise */
+.EnvInput {
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px;
+    color: #1e293b;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 12px;
+}
+
+.EnvInput:focus {
+    border: 1px solid #0d9488;
+    background-color: white;
+}
+
+.SecondaryButton {
+    background-color: #f1f5f9;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: bold;
+}
+
+.SecondaryButton:hover {
+    background-color: #e2e8f0;
+}

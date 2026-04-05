@@ -1,8 +1,11 @@
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 
 class DashboardCard(QFrame):
+
+    clicked = Signal()
+
     def __init__(self, title, value, subtext, border_color="#0d9488", link_text=""):
         super().__init__()
         self.setProperty("class", "GlassCard")
@@ -33,3 +36,12 @@ class DashboardCard(QFrame):
         layout.addWidget(title_lbl)
         layout.addWidget(value_lbl)
         layout.addLayout(sub_layout)
+
+        for i in range(layout.count()):
+            widget = layout.itemAt(i).widget()
+            if widget: widget.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)

@@ -6,49 +6,14 @@ from PySide6.QtCore import Qt, Signal, Slot, QFile, QTextStream
 
 import os
 
-from ui.widgets.DashboardCard import DashboardCard
+from ui.widgets.ConfigurationTab import ConfigurationTab
+from ui.widgets.InferenceTab import InferenceTab
 from ui.widgets.Sidebar import Sidebar
 
 if os.getenv("DEV_MODE") == 0:
     import resources_rc
 
 
-def create_management_tab():
-    page = QWidget()
-    layout = QVBoxLayout(page)
-    layout.setContentsMargins(30, 30, 30, 30)
-    layout.setSpacing(20)
-
-    # Stats Row
-    stats_layout = QHBoxLayout()
-    stats_layout.addWidget(DashboardCard("Local Training Round", "Round 14", "Accuracy: 84.1%", "#0d9488"))
-    stats_layout.addWidget(DashboardCard("Resource Status", "Optimized", "GPU Acceleration Active", "#3b82f6"))
-    stats_layout.addWidget(DashboardCard("Data Quality Alert", "3% Outliers", "View Quality Report", "#f43f5e"))
-    layout.addLayout(stats_layout)
-
-    # Config Form Card
-    form_card = QFrame()
-    form_card.setObjectName("GlassCard")
-    form_card.setProperty("class", "GlassCard")
-    form_layout = QHBoxLayout(form_card)
-
-    for label_text, default_val in [("Local Epochs", "3"), ("Batch Size", "32"), ("LR", "0.001")]:
-        v_box = QVBoxLayout()
-        v_box.addWidget(QLabel(label_text.upper()))
-        edit = QLineEdit(default_val)
-        edit.setStyleSheet("padding: 8px; border: 1px solid #e2e8f0; border-radius: 6px;")
-        v_box.addWidget(edit)
-        form_layout.addLayout(v_box)
-
-    layout.addWidget(form_card)
-
-    # Action Buttons
-    sync_btn = QPushButton("MANUALLY SYNCHRONIZE WEIGHTS")
-    sync_btn.setProperty("class", "PrimaryButton")
-    layout.addWidget(sync_btn)
-
-    layout.addStretch()
-    return page
 
 
 class ClientUi(QMainWindow):
@@ -69,9 +34,12 @@ class ClientUi(QMainWindow):
         # Content Stack
         self.content_stack = QStackedWidget()
 
+        self.config_tab = ConfigurationTab()
+        self.inference_tab = InferenceTab()
+
         # Add Tabs
-        self.content_stack.addWidget(create_management_tab())
-        self.content_stack.addWidget(QLabel("Inference Tab (Placeholder)"))
+        self.content_stack.addWidget(self.config_tab)
+        self.content_stack.addWidget(self.inference_tab)
         self.content_stack.addWidget(QLabel("Insights Tab (Placeholder)"))
 
         # Sidebar
