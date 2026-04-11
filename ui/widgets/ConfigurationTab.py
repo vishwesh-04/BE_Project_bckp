@@ -13,6 +13,8 @@ class ConfigurationTab(QWidget):
     server_updated = Signal(str)
     # Signal to request starting the FL Client node (url, epochs, batch_size, lr)
     sync_requested = Signal(str, int, int, float)
+    # Signal emitted when the ETL toggle button is pressed (True = active, False = idle)
+    etl_toggled = Signal(bool)
 
     def __init__(self):
         super().__init__()
@@ -22,6 +24,7 @@ class ConfigurationTab(QWidget):
         self.layout.setSpacing(25)
         
         self.logs_dialog = LogsDialog(self)
+        self._etl_active = False
 
         # 1. Stats Row (Top)
         self._init_stats_row()
@@ -61,9 +64,10 @@ class ConfigurationTab(QWidget):
         node_name = os.getenv("CLIENT_ID", CLIENT_ID)
         node_label = node_name[:12] if node_name else "Unassigned"
 
-        # Add the other two (non-interactive or connected elsewhere)
+        # Add stats cards
         stats_layout.addWidget(DashboardCard("Resource Status", "Active", gpu_stat, gpu_color))
         stats_layout.addWidget(DashboardCard("Node Identity", node_label, "Connected and Authenticated" if node_name else "Unknown Node", "#f43f5e" if not node_name else "#0d9488"))
+        stats_layout.addWidget(DashboardCard("Data Quality", "3% Outliers", "Review Quality Report", "#f43f5e"))
 
         self.layout.addLayout(stats_layout)
 
@@ -235,8 +239,27 @@ class ConfigurationTab(QWidget):
         self.layout.addWidget(card)
 
     def _init_action_buttons(self):
-        """Creates the primary sync button at the bottom."""
-        pass
+        """Creates the ETL toggle button at the bottom of the settings card."""
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+
+        self.etl_btn = QPushButton("TOGGLE ETL PIPELINE")
+        self.etl_btn.setProperty("class", "SecondaryButton")
+        self.etl_btn.setFixedHeight(44)
+        self.etl_btn.setCursor(Qt.PointingHandCursor)
+        self.etl_btn.clicked.connect(self._on_etl_clicked)
+        btn_row.addWidget(self.etl_btn)
+
+        self.layout.addLayout(btn_row)
+
+    def _on_etl_clicked(self):
+        self._etl_active = not self._etl_active
+        self.etl_toggled.emit(self._etl_active)
+
+    @Slot(bool)
+    def set_etl_active(self, active: bool):
+        """Called by topbar to sync ETL button state."""
+        self._etl_active = active
 
     def _emit_sync(self):
         url = self.server_input.text().strip()
