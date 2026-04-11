@@ -1,221 +1,220 @@
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QProgressBar
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton
 )
 from PySide6.QtCore import Qt
-from PySide6.QtCharts import QChart, QChartView, QBarSet, QHorizontalBarSeries, QBarCategoryAxis, QValueAxis
+from PySide6.QtCharts import (
+    QChart, QChartView, QBarSet, QHorizontalBarSeries, QBarCategoryAxis, QValueAxis
+)
 from PySide6.QtGui import QPainter, QColor
 
+
 class InsightsTab(QWidget):
+    """
+    Tab 2 — SHAP Insights
+    Matches the HTML prototype 'insights' section:
+      - Left 2/3: Global SHAP Feature Importance horizontal bar chart
+      - Right 1/3: Local Explainability card with:
+          - Primary Driver text block
+          - Sample SHAP Breakdown (3 progress bars: Glucose, BMI, Activity)
+          - Export SHAP Report button
+    """
+
     def __init__(self):
         super().__init__()
-        # Main layout for the whole tab
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(30, 30, 30, 30)
-        self.layout.setSpacing(25)
 
-        # 1. Header Row
-        self._init_header()
+        root = QHBoxLayout(self)
+        root.setContentsMargins(30, 30, 30, 30)
+        root.setSpacing(20)
 
-        # 2. Split View (Middle)
-        split_layout = QHBoxLayout()
-        split_layout.setSpacing(20)
-        
-        # Left Side: Global Feature Impact (70% stretch)
-        self.chart_card = self._create_chart_card()
-        split_layout.addWidget(self.chart_card, 7)
-        
-        # Right Side: Local Insights & Contribution (30% stretch)
-        self.local_insight_card = self._create_local_insight_card()
-        split_layout.addWidget(self.local_insight_card, 3)
+        # Left 2/3: Global SHAP chart card
+        root.addWidget(self._build_chart_card(), stretch=2)
 
-        self.layout.addLayout(split_layout)
+        # Right 1/3: Local Explainability card
+        root.addWidget(self._build_local_card(), stretch=1)
 
-        # 3. Action Row (Bottom)
-        self._init_action_row()
-
-        # Push everything to the top
-        self.layout.addStretch()
-
-    def _init_header(self):
-        header_layout = QHBoxLayout()
-        title = QLabel("SHAP Interpretability Dashboard")
-        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #1e293b;")
-        
-        # Status Badges
-        badge1 = QLabel("ETL Idle")
-        badge1.setStyleSheet("background-color: #f1f5f9; color: #64748b; padding: 5px 10px; border-radius: 10px; font-size: 12px; font-weight: bold;")
-        
-        badge2 = QLabel("Global Model Cached")
-        badge2.setStyleSheet("background-color: #dcfce7; color: #166534; padding: 5px 10px; border-radius: 10px; font-size: 12px; font-weight: bold;")
-        
-        header_layout.addWidget(title)
-        header_layout.addStretch()
-        header_layout.addWidget(badge1)
-        header_layout.addWidget(badge2)
-        
-        self.layout.addLayout(header_layout)
-
-    def _create_chart_card(self):
+    # -------------------------------------------------------------------- #
+    #  Left card — Global SHAP Feature Importance                           #
+    # -------------------------------------------------------------------- #
+    def _build_chart_card(self) -> QFrame:
         card = QFrame()
         card.setObjectName("GlassCard")
         card.setProperty("class", "GlassCard")
+
         layout = QVBoxLayout(card)
         layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
 
-        title = QLabel("GLOBAL FEATURE IMPACT (SHAP)")
-        title.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: 700; letter-spacing: 1px;")
+        title = QLabel("GLOBAL SHAP FEATURE IMPORTANCE")
+        title.setProperty("class", "CardTitle")
         layout.addWidget(title)
 
-        # Setup QtCharts Horizontal Bar Chart
+        # Horizontal bar chart — matches prototype data
         chart = QChart()
         chart.setAnimationOptions(QChart.SeriesAnimations)
         chart.legend().setVisible(False)
         chart.layout().setContentsMargins(0, 0, 0, 0)
         chart.setBackgroundRoundness(0)
+        chart.setBackgroundBrush(QColor("transparent"))
+
+        bar_set = QBarSet("Impact")
+        bar_set.setColor(QColor("#0d9488"))
+        # Prototype data: Glucose, Age, BMI, Insulin, BP, Pedigree
+        values = [0.45, 0.38, 0.29, 0.21, 0.18, 0.12]
+        for v in values:
+            bar_set.append(v)
 
         series = QHorizontalBarSeries()
-        
-        # Mock Data (Teal bars for SHAP values)
-        set0 = QBarSet("SHAP Value")
-        set0.setColor(QColor("#0d9488")) # Teal
-        set0.append([0.1, 0.25, 0.4, 0.65, 0.85])
-        series.append(set0)
-
+        series.append(bar_set)
         chart.addSeries(series)
 
-        # Axes
-        categories = ["BMI", "Age", "Blood Pressure", "Heart Rate", "Glucose"]
-        axisY = QBarCategoryAxis()
-        axisY.append(categories)
-        chart.addAxis(axisY, Qt.AlignLeft)
-        series.attachAxis(axisY)
+        categories = ["Pedigree", "Blood Pressure", "Insulin", "BMI", "Age", "Glucose"]
+        axis_y = QBarCategoryAxis()
+        axis_y.append(categories)
+        axis_y.setLabelsFont(self.font())
+        chart.addAxis(axis_y, Qt.AlignLeft)
+        series.attachAxis(axis_y)
 
-        axisX = QValueAxis()
-        axisX.setTitleText("Mean |SHAP| value (impact on model output)")
-        chart.addAxis(axisX, Qt.AlignBottom)
-        series.attachAxis(axisX)
+        axis_x = QValueAxis()
+        axis_x.setRange(0, 0.55)
+        axis_x.setLabelFormat("%.2f")
+        axis_x.setGridLineColor(QColor("#f1f5f9"))
+        axis_x.setTickCount(6)
+        chart.addAxis(axis_x, Qt.AlignBottom)
+        series.attachAxis(axis_x)
 
         chart_view = QChartView(chart)
         chart_view.setRenderHint(QPainter.Antialiasing)
-        chart_view.setMinimumHeight(300)
+        chart_view.setMinimumHeight(280)
         chart_view.setStyleSheet("background: transparent;")
-        
+
         layout.addWidget(chart_view)
         return card
 
-    def _create_local_insight_card(self):
+    # -------------------------------------------------------------------- #
+    #  Right card — Local Explainability                                     #
+    # -------------------------------------------------------------------- #
+    def _build_local_card(self) -> QFrame:
         card = QFrame()
         card.setObjectName("GlassCard")
         card.setProperty("class", "GlassCard")
+
         layout = QVBoxLayout(card)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setSpacing(14)
 
-        title = QLabel("INDIVIDUAL SAMPLE REASONING")
-        title.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: 700; letter-spacing: 1px;")
+        title = QLabel("LOCAL EXPLAINABILITY")
+        title.setProperty("class", "CardTitle")
         layout.addWidget(title)
 
-        # Natural Language Insight (Soft green background)
-        insight_text = (
-            "<b>Local Insight #1:</b><br><br>"
-            "This patient has a higher predicted risk primarily due to elevated <b>Glucose</b> levels "
-            "and higher than average <b>BMI</b>. Physical activity slightly offsets this risk."
+        # Primary Driver text box
+        driver_box = QFrame()
+        driver_box.setStyleSheet(
+            "background: #f8fafc; border: 1px solid #f1f5f9; border-radius: 10px;"
         )
-        insight_label = QLabel(insight_text)
-        insight_label.setWordWrap(True)
-        insight_label.setStyleSheet("""
-            background-color: #ecfdf5;
-            color: #065f46;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #a7f3d0;
-            font-size: 13px;
-            line-height: 1.5;
-        """)
-        layout.addWidget(insight_label)
+        driver_lay = QVBoxLayout(driver_box)
+        driver_lay.setContentsMargins(12, 10, 12, 10)
 
-        # Typical Contribution Plot (Red/Blue Bars using QProgressBar)
-        contrib_title = QLabel("Feature Contributions")
-        contrib_title.setStyleSheet("color: #475569; font-size: 11px; font-weight: bold; margin-top: 10px;")
-        layout.addWidget(contrib_title)
+        driver_lbl_title = QLabel("PRIMARY DRIVER")
+        driver_lbl_title.setProperty("class", "CardTitle")
 
-        layout.addWidget(self._create_contribution_row("Glucose", "+0.31", True))
-        layout.addWidget(self._create_contribution_row("BMI", "+0.15", True))
-        layout.addWidget(self._create_contribution_row("Activity", "-0.09", False))
-        
+        driver_text = QLabel(
+            "In your facility, <b>Age Factor</b> has a 12% higher impact on "
+            "predictions than the global average."
+        )
+        driver_text.setWordWrap(True)
+        driver_text.setStyleSheet(
+            "color: #334155; font-size: 11px; font-weight: 500; line-height: 1.4;"
+        )
+        driver_text.setTextFormat(Qt.RichText)
+
+        driver_lay.addWidget(driver_lbl_title)
+        driver_lay.addWidget(driver_text)
+        layout.addWidget(driver_box)
+
+        # Divider label
+        breakdown_lbl = QLabel("SAMPLE SHAP BREAKDOWN")
+        breakdown_lbl.setProperty("class", "CardTitle")
+        breakdown_lbl.setStyleSheet(
+            "color: #94a3b8; font-size: 9px; font-weight: 800; "
+            "letter-spacing: 2px; padding-top: 8px; border-top: 1px solid #f1f5f9;"
+        )
+        layout.addWidget(breakdown_lbl)
+
+        # SHAP bars matching prototype
+        layout.addWidget(self._shap_bar("Glucose",  "+0.34", 0.75,  positive=True))
+        layout.addWidget(self._shap_bar("BMI",      "+0.12", 0.25,  positive=True))
+        layout.addWidget(self._shap_bar("Activity", "-0.18", 0.40,  positive=False))
+
         layout.addStretch()
+
+        # Export SHAP Report button
+        export_btn = QPushButton("EXPORT SHAP REPORT")
+        export_btn.setCursor(Qt.PointingHandCursor)
+        export_btn.setFixedHeight(36)
+        export_btn.setStyleSheet(
+            "background-color: #0d9488; color: white; font-weight: 800; "
+            "font-size: 10px; letter-spacing: 1px; border-radius: 8px; border: none;"
+        )
+        layout.addWidget(export_btn)
+
         return card
 
-    def _create_contribution_row(self, feature_name, value_str, is_positive):
+    # -------------------------------------------------------------------- #
+    #  SHAP bar row helper                                                   #
+    # -------------------------------------------------------------------- #
+    def _shap_bar(self, name: str, value_str: str, fill: float, positive: bool) -> QWidget:
+        """
+        Renders a single SHAP bar row:
+          [label]  [bar fill]  [+/-value]
+        Positive = red (#f87171), Negative = blue (#60a5fa) — matches prototype.
+        """
         row = QWidget()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        
-        lbl = QLabel(feature_name)
-        lbl.setFixedWidth(60)
-        lbl.setStyleSheet("color: #475569; font-size: 12px;")
-        
+        row.setStyleSheet("background: transparent;")
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 4, 0, 4)
+        lay.setSpacing(8)
+
+        bar_color = "#f87171" if positive else "#60a5fa"
+        text_color = "#ef4444" if positive else "#3b82f6"
+
+        name_lbl = QLabel(name)
+        name_lbl.setFixedWidth(58)
+        name_lbl.setStyleSheet("font-size: 10px; color: #475569;")
+
+        # Bar track
+        track = QFrame()
+        track.setFixedHeight(8)
+        track.setStyleSheet(
+            "background: #f1f5f9; border-radius: 4px;"
+        )
+
+        # Fill bar (inner frame, width as proportion of track via stretch doesn't work
+        # precisely in Qt; we use a nested layout trick)
+        fill_container = QFrame()
+        fill_container.setFixedHeight(8)
+        fill_layout = QHBoxLayout(fill_container)
+        fill_layout.setContentsMargins(0, 0, 0, 0)
+        fill_layout.setSpacing(0)
+
+        fill_bar = QFrame()
+        fill_bar.setFixedHeight(8)
+        fill_bar.setStyleSheet(
+            f"background: {bar_color}; border-radius: 4px;"
+        )
+
+        fill_int = max(1, int(fill * 100))
+        fill_layout.addWidget(fill_bar, stretch=fill_int)
+        fill_layout.addStretch(100 - fill_int)
+
         val_lbl = QLabel(value_str)
-        val_lbl.setFixedWidth(40)
-        val_lbl.setStyleSheet(f"color: {'#e11d48' if is_positive else '#2563eb'}; font-size: 12px; font-weight: bold;")
-        
-        bar = QProgressBar()
-        bar.setTextVisible(False)
-        bar.setFixedHeight(8)
-        bar.setMaximum(100)
-        
-        # Style progress bar based on positive (red) or negative (blue) contribution
-        color = "#e11d48" if is_positive else "#2563eb"
-        val_pct = 70 if is_positive else 30 # Mock percentages
-        bar.setValue(val_pct)
-        
-        bar.setStyleSheet(f"""
-            QProgressBar {{
-                background-color: #f1f5f9;
-                border: none;
-                border-radius: 4px;
-            }}
-            QProgressBar::chunk {{
-                background-color: {color};
-                border-radius: 4px;
-            }}
-        """)
-        
-        row_layout.addWidget(lbl)
-        row_layout.addWidget(val_lbl)
-        row_layout.addWidget(bar)
-        
+        val_lbl.setFixedWidth(36)
+        val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        val_lbl.setStyleSheet(
+            f"font-size: 10px; font-weight: 800; color: {text_color};"
+        )
+
+        lay.addWidget(name_lbl)
+        lay.addWidget(fill_container, stretch=1)
+        lay.addWidget(val_lbl)
+
         return row
-
-    def _init_action_row(self):
-        action_layout = QHBoxLayout()
-        action_layout.setSpacing(20)
-
-        export_btn = self._create_action_card("Export Report", "Save insights as PDF")
-        history_btn = self._create_action_card("View History", "Past patient interpretations")
-        contact_btn = self._create_action_card("Contact Admin", "Report anomaly in data")
-
-        action_layout.addWidget(export_btn)
-        action_layout.addWidget(history_btn)
-        action_layout.addWidget(contact_btn)
-
-        self.layout.addLayout(action_layout)
-
-    def _create_action_card(self, title_text, desc_text):
-        card = QFrame()
-        card.setObjectName("GlassCard")
-        card.setProperty("class", "GlassCard")
-        
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(15, 15, 15, 15)
-        
-        title = QLabel(title_text)
-        title.setStyleSheet("color: #0f172a; font-size: 14px; font-weight: bold;")
-        
-        desc = QLabel(desc_text)
-        desc.setStyleSheet("color: #64748b; font-size: 11px;")
-        
-        layout.addWidget(title)
-        layout.addWidget(desc)
-        
-        return card

@@ -2,48 +2,74 @@ from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QProgressBar, QButtonGroup
 )
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIcon
-from PySide6.QtSvgWidgets import QSvgWidget
-from PySide6.QtCore import QByteArray
+from PySide6.QtCore import Qt, Signal, QByteArray, QSize
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+from PySide6.QtSvg import QSvgRenderer
 
 
-# SVG path strings for each nav item (all 18×18 viewBox)
-_ICONS = {
-    "Dashboard": """<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
-        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect width="7" height="9" x="3" y="3" rx="1"/>
-        <rect width="7" height="5" x="14" y="3" rx="1"/>
-        <rect width="7" height="9" x="14" y="12" rx="1"/>
-        <rect width="7" height="5" x="3" y="16" rx="1"/>
-    </svg>""",
+# ─────────────────────────────────────────────────────────────────────────────
+# SVG icon strings  (18×18 viewBox — match prototype exactly)
+# ─────────────────────────────────────────────────────────────────────────────
+def _svg(path_data: str) -> str:
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" '
+        f'viewBox="0 0 24 24" fill="none" stroke="COLOR" '
+        f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        f'{path_data}</svg>'
+    )
 
-    "Live Prediction": """<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
-        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-    </svg>""",
 
-    "SHAP Insights": """<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
-        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="20" x2="18" y2="10"/>
-        <line x1="12" y1="20" x2="12" y2="4"/>
-        <line x1="6" y1="20" x2="6" y2="14"/>
-    </svg>""",
-
-    "Round History": """<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
-        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-        <path d="M3 3v5h5"/>
-        <path d="M12 7v5l4 2"/>
-    </svg>""",
-
-    "Node Settings": """<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
-        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
-        <circle cx="12" cy="12" r="3"/>
-    </svg>""",
+_SVG_ICONS: dict[str, str] = {
+    "Dashboard": _svg(
+        '<rect width="7" height="9" x="3" y="3" rx="1"/>'
+        '<rect width="7" height="5" x="14" y="3" rx="1"/>'
+        '<rect width="7" height="9" x="14" y="12" rx="1"/>'
+        '<rect width="7" height="5" x="3" y="16" rx="1"/>'
+    ),
+    "Live Prediction": _svg(
+        '<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'
+    ),
+    "SHAP Insights": _svg(
+        '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8'
+        'a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>'
+        '<polyline points="7.5 4.21 12 6.81 16.5 4.21"/>'
+        '<polyline points="7.5 19.79 7.5 14.6 3 12"/>'
+        '<polyline points="21 12 16.5 14.6 16.5 19.79"/>'
+        '<polyline points="3.27 6.96 12 12.01 20.73 6.96"/>'
+        '<line x1="12" y1="22.08" x2="12" y2="12"/>'
+    ),
+    "Round History": _svg(
+        '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>'
+        '<path d="M3 3v5h5"/>'
+        '<path d="M12 7v5l4 2"/>'
+    ),
+    "Node Settings": _svg(
+        '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 '
+        '0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 '
+        '1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73'
+        'l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 '
+        '2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73'
+        'l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74'
+        'l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 '
+        '0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>'
+        '<circle cx="12" cy="12" r="3"/>'
+    ),
 }
 
+
+def _svg_to_icon(svg_str: str, color: str = "#475569") -> QIcon:
+    """Render an SVG string to a QIcon at 18×18 with the given stroke color."""
+    colored = svg_str.replace("COLOR", color)
+    renderer = QSvgRenderer(QByteArray(colored.encode()))
+    pixmap = QPixmap(18, 18)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pixmap)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 class Sidebar(QFrame):
     """
@@ -51,9 +77,9 @@ class Sidebar(QFrame):
     Emits nav_clicked(index) when a tab button is clicked.
     Maps: 0=Dashboard, 1=Live Prediction, 2=SHAP Insights, 3=Round History, 4=Node Settings
     """
+
     nav_clicked = Signal(int)
 
-    # Tab ordering must match QStackedWidget order in main.py
     NAV_ITEMS = [
         "Dashboard",
         "Live Prediction",
@@ -71,79 +97,34 @@ class Sidebar(QFrame):
         layout.setSpacing(0)
 
         # ── Logo section ─────────────────────────────────────────────────
-        logo_frame = QFrame()
-        logo_frame.setStyleSheet(
-            "background: white; border-bottom: 1px solid #f1f5f9; padding: 0;"
-        )
-        logo_layout = QHBoxLayout(logo_frame)
-        logo_layout.setContentsMargins(20, 18, 20, 18)
-        logo_layout.setSpacing(12)
-
-        # Teal icon capsule
-        icon_lbl = QLabel("♥")  # Unicode heart as fallback
-        icon_lbl.setStyleSheet(
-            "background: #0d9488; color: white; border-radius: 8px; "
-            "padding: 6px; font-size: 14px; font-weight: bold;"
-        )
-        icon_lbl.setFixedSize(34, 34)
-        icon_lbl.setAlignment(Qt.AlignCenter)
-
-        name_layout = QVBoxLayout()
-        name_layout.setSpacing(0)
-        name_layout.setContentsMargins(0, 0, 0, 0)
-
-        name_label = QLabel("MedLink")
-        name_label.setProperty("class", "LogoText")
-
-        node_label = QLabel("FL Node Pro")
-        node_label.setStyleSheet(
-            "color: #0d9488; font-size: 9px; font-weight: 800; "
-            "letter-spacing: 2px; text-transform: uppercase;"
-        )
-
-        name_layout.addWidget(name_label)
-        name_layout.addWidget(node_label)
-
-        logo_layout.addWidget(icon_lbl)
-        logo_layout.addLayout(name_layout)
-        logo_layout.addStretch()
-
-        layout.addWidget(logo_frame)
+        layout.addWidget(self._build_logo())
 
         # ── Navigation ───────────────────────────────────────────────────
         nav_frame = QFrame()
         nav_frame.setStyleSheet("background: white;")
         nav_layout = QVBoxLayout(nav_frame)
         nav_layout.setContentsMargins(12, 16, 12, 16)
-        nav_layout.setSpacing(4)
+        nav_layout.setSpacing(2)
 
         self.button_group = QButtonGroup(self)
         self.button_group.setExclusive(True)
 
         for i, name in enumerate(self.NAV_ITEMS):
-            # Insert a section divider before "Node Settings"
             if name == "Node Settings":
-                divider_lbl = QLabel("SYSTEM")
-                divider_lbl.setStyleSheet(
+                divider = QLabel("SYSTEM")
+                divider.setStyleSheet(
                     "color: #94a3b8; font-size: 9px; font-weight: 800; "
                     "letter-spacing: 2px; padding: 14px 4px 4px 4px; "
                     "background: transparent;"
                 )
-                nav_layout.addWidget(divider_lbl)
+                nav_layout.addWidget(divider)
 
-            btn = QPushButton(f"   {name}")
-            btn.setProperty("class", "SidebarItem")
-            btn.setCheckable(True)
-            btn.setFixedHeight(42)
-            btn.setCursor(Qt.PointingHandCursor)
-
+            btn = self._nav_button(name, i)
             nav_layout.addWidget(btn)
             self.button_group.addButton(btn, i)
 
-        # Wire group signal → our public signal
         self.button_group.idClicked.connect(self.nav_clicked.emit)
 
-        # Default: first button active
         if self.button_group.button(0):
             self.button_group.button(0).setChecked(True)
 
@@ -151,45 +132,123 @@ class Sidebar(QFrame):
         layout.addStretch()
 
         # ── Resource Load section ─────────────────────────────────────────
+        layout.addWidget(self._build_resource_frame())
+
+    # ------------------------------------------------------------------ #
+
+    def _build_logo(self) -> QFrame:
+        logo_frame = QFrame()
+        logo_frame.setStyleSheet(
+            "background: white; border-bottom: 1px solid #f1f5f9; padding: 0;"
+        )
+        lay = QHBoxLayout(logo_frame)
+        lay.setContentsMargins(20, 18, 20, 18)
+        lay.setSpacing(12)
+
+        # Teal icon capsule — ECG waveform symbol
+        icon_lbl = QLabel("⚕")
+        icon_lbl.setStyleSheet(
+            "background: #0d9488; color: white; border-radius: 8px; "
+            "padding: 4px; font-size: 16px; font-weight: bold;"
+        )
+        icon_lbl.setFixedSize(34, 34)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+
+        name_col = QVBoxLayout()
+        name_col.setSpacing(0)
+        name_col.setContentsMargins(0, 0, 0, 0)
+
+        name_label = QLabel("MedLink")
+        name_label.setStyleSheet(
+            "font-size: 17px; font-weight: 800; color: #0f172a; "
+            "letter-spacing: -0.5px; background: transparent;"
+        )
+
+        node_label = QLabel("FL Node Pro")
+        node_label.setStyleSheet(
+            "color: #0d9488; font-size: 9px; font-weight: 800; "
+            "letter-spacing: 2px; background: transparent;"
+        )
+
+        name_col.addWidget(name_label)
+        name_col.addWidget(node_label)
+
+        lay.addWidget(icon_lbl)
+        lay.addLayout(name_col)
+        lay.addStretch()
+
+        return logo_frame
+
+    def _nav_button(self, name: str, index: int) -> QPushButton:
+        """Build a sidebar nav button with an SVG icon on the left."""
+        btn = QPushButton(f"  {name}")
+        btn.setProperty("class", "SidebarItem")
+        btn.setCheckable(True)
+        btn.setFixedHeight(42)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setIconSize(QSize(18, 18))
+
+        # Default (inactive) icon — slate color
+        inactive_icon = _svg_to_icon(_SVG_ICONS.get(name, ""), color="#475569")
+        active_icon   = _svg_to_icon(_SVG_ICONS.get(name, ""), color="white")
+
+        btn.setIcon(inactive_icon)
+
+        # Swap icon color when checked state changes
+        original_toggled = None
+
+        def _on_toggle(checked, b=btn, ai=active_icon, ii=inactive_icon):
+            if checked:
+                b.setIcon(ai)
+                b.setStyleSheet("background-color: #0d9488;")
+            else:
+                b.setIcon(ii)
+                b.setStyleSheet("background-color: white;")
+            
+                
+
+        btn.toggled.connect(_on_toggle)
+
+        return btn
+
+    def _build_resource_frame(self) -> QFrame:
         health_frame = QFrame()
         health_frame.setStyleSheet(
             "background: #f8fafc; border-top: 1px solid #f1f5f9;"
         )
-        health_layout = QVBoxLayout(health_frame)
-        health_layout.setContentsMargins(16, 14, 16, 16)
-        health_layout.setSpacing(10)
+        lay = QVBoxLayout(health_frame)
+        lay.setContentsMargins(16, 14, 16, 16)
+        lay.setSpacing(10)
 
-        health_title = QLabel("RESOURCE LOAD")
-        health_title.setProperty("class", "HealthLabel")
-        health_layout.addWidget(health_title)
+        title = QLabel("RESOURCE LOAD")
+        title.setStyleSheet(
+            "color: #94a3b8; font-size: 9px; font-weight: 800; "
+            "letter-spacing: 2px; background: transparent;"
+        )
+        lay.addWidget(title)
 
-        self.gpu_bar = self._create_health_item(health_layout, "Local GPU", "58%", "#0d9488")
-        self.mem_bar = self._create_health_item(health_layout, "Memory",    "4.2 GB", "#3b82f6")
+        self.gpu_bar = self._resource_item(lay, "Local GPU", "58%",   "#0d9488", 58)
+        self.mem_bar = self._resource_item(lay, "Memory",    "4.2 GB", "#3b82f6", 52)
 
-        layout.addWidget(health_frame)
+        return health_frame
 
-    # ------------------------------------------------------------------ #
-    #  Health bar helper                                                   #
-    # ------------------------------------------------------------------ #
-    def _create_health_item(self, parent_layout, label, val, color):
+    @staticmethod
+    def _resource_item(parent_layout, label: str, val: str, color: str, pct: int) -> QProgressBar:
         row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        l = QLabel(label)
-        v = QLabel(val)
-        l.setProperty("class", "HealthSub")
-        v.setProperty("class", "HealthSub")
-        row.addWidget(l)
+        lbl = QLabel(label)
+        val_lbl = QLabel(val)
+        for l in (lbl, val_lbl):
+            l.setStyleSheet(
+                "color: #64748b; font-size: 9px; font-weight: 700; "
+                "letter-spacing: 0.5px; background: transparent;"
+            )
+        row.addWidget(lbl)
         row.addStretch()
-        row.addWidget(v)
+        row.addWidget(val_lbl)
 
         bar = QProgressBar()
         bar.setRange(0, 100)
-        # Parse numeric value for the bar
-        numeric = val.replace('%', '').replace(' GB', '').strip()
-        try:
-            bar.setValue(int(float(numeric) * (100 / 8) if 'GB' in val else float(numeric)))
-        except ValueError:
-            bar.setValue(0)
+        bar.setValue(pct)
         bar.setFixedHeight(4)
         bar.setTextVisible(False)
         bar.setStyleSheet(
@@ -199,14 +258,13 @@ class Sidebar(QFrame):
 
         parent_layout.addLayout(row)
         parent_layout.addWidget(bar)
-
         return bar
 
     # ------------------------------------------------------------------ #
-    #  Public helper                                                        #
+    #  Public helpers                                                       #
     # ------------------------------------------------------------------ #
     def set_active_tab(self, index: int):
-        """Programmatically activate a tab button (e.g. from 'Edit Config' link)."""
+        """Programmatically activate a tab button."""
         btn = self.button_group.button(index)
         if btn:
             btn.setChecked(True)

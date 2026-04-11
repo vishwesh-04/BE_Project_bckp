@@ -22,7 +22,7 @@ QWidget {
     background-color: white;
     border-right: 1px solid #e2e8f0;
     min-width: 220px;
-    max-width: 240px;
+    max-width: 248px;
 }
 
 /* ── Topbar ─────────────────────────────────────────────────────────────── */
@@ -131,6 +131,19 @@ QCheckBox::indicator:unchecked {
 .SidebarItem:checked {
     background-color: #0d9488;
     color: white;
+    /* Subtle shadow matching prototype */
+    border: none;
+}
+
+QLabel {
+    background-color: transparent;
+    border: none;
+}
+
+/* If you want to be extra safe and only target labels inside cards */
+.GlassCard QLabel, #DashboardCard QLabel {
+    background-color: transparent;
+    border: none;
 }
 
 /* ── Glass cards ────────────────────────────────────────────────────────── */
@@ -164,15 +177,14 @@ QCheckBox::indicator:unchecked {
     text-decoration: underline;
 }
 
-/* ── Inputs ─────────────────────────────────────────────────────────────── */
+/* ── Inputs (QLineEdit) ─────────────────────────────────────────────────── */
 .EnvInput,
 QLineEdit[class="EnvInput"] {
     background-color: #f8fafc;
     border: 1px solid #e2e8f0;
     border-radius: 8px;
-    padding: 10px 12px;
+    padding: 8px 12px;
     color: #1e293b;
-    font-family: 'JetBrains Mono', 'Consolas', monospace;
     font-size: 12px;
     selection-background-color: #0d9488;
 }
@@ -187,6 +199,22 @@ QLineEdit[class="EnvInput"]:focus {
 .EnvInput:read-only {
     color: #94a3b8;
     background-color: #f1f5f9;
+}
+
+/* ── Text areas (QTextEdit) ─────────────────────────────────────────────── */
+QTextEdit {
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: #1e293b;
+    font-size: 12px;
+    selection-background-color: #0d9488;
+}
+
+QTextEdit:focus {
+    border: 1.5px solid #0d9488;
+    background-color: white;
 }
 
 /* ── Buttons ─────────────────────────────────────────────────────────────── */
@@ -347,4 +375,10 @@ QComboBox QAbstractItemView {
     border-radius: 8px;
     selection-background-color: #f0fdfa;
     selection-color: #0f172a;
+}
+
+/* ── Scroll area container (settings tab) ─────────────────────────────── */
+QScrollArea {
+    background: transparent;
+    border: none;
 }

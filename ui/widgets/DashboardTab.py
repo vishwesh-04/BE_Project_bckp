@@ -65,7 +65,7 @@ class DashboardTab(QWidget):
         card = QFrame()
         card.setObjectName("GlassCard")
         card.setProperty("class", "GlassCard")
-        card.setStyleSheet(f"border-left: 4px solid {border_color};")
+        # card.setStyleSheet(f"border-left: 4px solid {border_color};")
         if clickable:
             card.setCursor(Qt.PointingHandCursor)
             # Store ref so we can update it later

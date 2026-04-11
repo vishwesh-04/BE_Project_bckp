@@ -1,329 +1,296 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
-                               QLabel, QLineEdit, QPushButton, QTableWidget,
-                               QTableWidgetItem, QHeaderView, QAbstractItemView,
-                               QScrollArea, QMessageBox)
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QFrame,
+    QLabel, QLineEdit, QPushButton, QTableWidget,
+    QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QMessageBox, QSizePolicy
+)
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QColor, QFont
 
-
 from client.inference_engine import PredictionResult
 
+
 class InferenceTab(QWidget):
-    # Future-proofing: Signal to tell the wrapper to verify a record
-    verify_requested = Signal(str, bool)  # patient_id, is_correct
-    # Signal to request a prediction
+    """
+    Tab 1 — Live Prediction
+    Matches the HTML prototype 'inference' section:
+      - Left 1/3: Ad-hoc prediction card (3 inputs + Run button + result card)
+      - Right 2/3: Live Pipeline Queue table card (with ETL toggle button)
+    """
+
+    # Signal to request a prediction from the FL worker
     predict_requested = Signal(dict)
 
     def __init__(self):
         super().__init__()
-        # Main Layout: [Left Column] | [Center Table] | [Right Drawer]
-        self.main_layout = QHBoxLayout(self)
-        self.main_layout.setContentsMargins(30, 30, 30, 30)
-        self.main_layout.setSpacing(20)
 
-        # 1. LEFT COLUMN: Manual Inputs & Policy
-        self.left_col = QVBoxLayout()
-        self._setup_manual_tool()
-        self.main_layout.addLayout(self.left_col, stretch=0)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(30, 30, 30, 30)
+        root.setSpacing(20)
 
-        # 2. CENTER COLUMN: Warehouse Table & KPIs
-        self.center_col = QVBoxLayout()
-        self._setup_warehouse_view()
-        self._setup_kpi_row()
-        self.main_layout.addLayout(self.center_col, stretch=1)
+        # Left: Ad-hoc prediction card (stretch=1)
+        root.addWidget(self._build_prediction_card(), stretch=1)
 
-        # 3. RIGHT COLUMN: The Detail Drawer (Hidden by default)
-        self._setup_detail_drawer()
-        self.main_layout.addWidget(self.detail_drawer)
+        # Right: Pipeline queue table card (stretch=2)
+        root.addWidget(self._build_queue_card(), stretch=2)
 
-    def _setup_manual_tool(self):
+    # -------------------------------------------------------------------- #
+    #  Left column — Ad-hoc Prediction                                      #
+    # -------------------------------------------------------------------- #
+    def _build_prediction_card(self) -> QFrame:
         card = QFrame()
         card.setObjectName("GlassCard")
         card.setProperty("class", "GlassCard")
-        card.setFixedWidth(320)
 
-        v_layout = QVBoxLayout(card)
-        v_layout.setContentsMargins(20, 20, 20, 20)
-        v_layout.setSpacing(15)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
 
-        title = QLabel("Manual Diagnostic Tool")
-        title.setStyleSheet("font-weight: bold; color: #1e293b; font-size: 13px;")
-        v_layout.addWidget(title)
+        # Title
+        title_row = QHBoxLayout()
+        title = QLabel("Ad-hoc Prediction")
+        title.setStyleSheet(
+            "font-size: 12px; font-weight: 700; color: #1e293b; letter-spacing: 0.5px;"
+        )
+        title_row.addWidget(title)
+        layout.addLayout(title_row)
 
-        self.inputs = {}
-        for key, text in [("glucose", "BLOOD GLUCOSE (MG/DL)"), ("age", "AGE FACTOR"), ("bmi", "BMI VALUE")]:
-            l = QLabel(text)
-            l.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: bold;")
+        # Three inputs
+        self._inputs = {}
+        fields = [
+            ("glucose", "Serum Glucose", "120"),
+            ("age",     "Patient Age",   "45"),
+            ("bmi",     "Body Mass Index", "24.2"),
+        ]
+        for key, label_text, placeholder in fields:
+            lbl = QLabel(label_text.upper())
+            lbl.setStyleSheet(
+                "color: #94a3b8; font-size: 9px; font-weight: 800; "
+                "letter-spacing: 1px;"
+            )
             edit = QLineEdit()
-            edit.setPlaceholderText("e.g. ...")
+            edit.setPlaceholderText(placeholder)
             edit.setProperty("class", "EnvInput")
-            v_layout.addWidget(l)
-            v_layout.addWidget(edit)
-            self.inputs[key] = edit
+            edit.setFixedHeight(36)
+            layout.addWidget(lbl)
+            layout.addWidget(edit)
+            self._inputs[key] = edit
 
-        self.predict_btn = QPushButton("PREDICT FOR PATIENT")
-        self.predict_btn.setStyleSheet("""
-            background-color: #1e293b; color: white; font-weight: bold; 
-            padding: 12px; border-radius: 8px; margin-top: 5px;
-        """)
-        self.predict_btn.clicked.connect(self._emit_predict)
-        v_layout.addWidget(self.predict_btn)
-        v_layout.addStretch()
-        self.left_col.addWidget(card)
+        # Run button
+        self._run_btn = QPushButton("PREDICT")
+        self._run_btn.setProperty("class", "PrimaryButton")
+        self._run_btn.setFixedHeight(42)
+        self._run_btn.setCursor(Qt.PointingHandCursor)
+        self._run_btn.setStyleSheet(
+            "background-color: #1e293b; color: white; font-weight: 800; "
+            "font-size: 10px; letter-spacing: 1px; border-radius: 10px; "
+            "border: none;"
+        )
+        self._run_btn.clicked.connect(self._emit_predict)
+        layout.addWidget(self._run_btn)
 
-        # Policy Box
-        policy = QFrame()
-        policy.setStyleSheet("background-color: #1e3a8a; border-radius: 12px; padding: 15px;")
-        p_layout = QVBoxLayout(policy)
-        p_title = QLabel("CACHING POLICY")
-        p_title.setStyleSheet("color: #93c5fd; font-size: 9px; font-weight: bold;")
-        p_text = QLabel("Global model v4.2 is cached locally. Inference latency: ~14ms.")
-        p_text.setWordWrap(True)
-        p_text.setStyleSheet("color: white; font-size: 10px; line-height: 14px;")
-        p_layout.addWidget(p_title)
-        p_layout.addWidget(p_text)
-        self.left_col.addWidget(policy)
+        # Result card (hidden until result)
+        self._result_card = QFrame()
+        self._result_card.setObjectName("ResultCard")
+        self._result_card.hide()
+        rc_layout = QVBoxLayout(self._result_card)
+        rc_layout.setContentsMargins(14, 12, 14, 12)
+        rc_layout.setSpacing(2)
 
-    def _setup_warehouse_view(self):
+        score_row = QHBoxLayout()
+        score_label = QLabel("RESULT SCORE")
+        score_label.setStyleSheet(
+            "font-size: 9px; font-weight: 800; color: #0f766e; letter-spacing: 1px;"
+        )
+        self._score_lbl = QLabel("0.00")
+        self._score_lbl.setStyleSheet(
+            "font-size: 18px; font-weight: 900; color: #134e4a;"
+        )
+        score_row.addWidget(score_label)
+        score_row.addStretch()
+        score_row.addWidget(self._score_lbl)
+
+        self._risk_lbl = QLabel("NEGATIVE / LOW RISK BASELINE")
+        self._risk_lbl.setStyleSheet(
+            "font-size: 9px; font-weight: 700; color: #0f766e; letter-spacing: 0.5px;"
+        )
+
+        rc_layout.addLayout(score_row)
+        rc_layout.addWidget(self._risk_lbl)
+
+        self._result_card.setStyleSheet(
+            "background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 12px;"
+        )
+        layout.addWidget(self._result_card)
+        layout.addStretch()
+
+        return card
+
+    # -------------------------------------------------------------------- #
+    #  Right column — Live Pipeline Queue                                    #
+    # -------------------------------------------------------------------- #
+    def _build_queue_card(self) -> QFrame:
         card = QFrame()
         card.setObjectName("GlassCard")
         card.setProperty("class", "GlassCard")
 
         layout = QVBoxLayout(card)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # Header with Auto-Refresh toggle placeholder
-        header_widget = QWidget()
-        header_widget.setStyleSheet("padding: 15px 20px; border-bottom: 1px solid #f1f5f9;")
-        h_layout = QHBoxLayout(header_widget)
+        # Card header
+        header = QFrame()
+        header.setStyleSheet(
+            "background: #f8fafc; border-bottom: 1px solid #f1f5f9; "
+            "border-top-left-radius: 12px; border-top-right-radius: 12px;"
+        )
+        h_layout = QHBoxLayout(header)
+        h_layout.setContentsMargins(16, 12, 16, 12)
 
-        title = QLabel("Warehouse Records (Pending Review)")
-        title.setStyleSheet("font-weight: bold; color: #1e293b; font-size: 13px;")
+        h_title = QLabel("LIVE PIPELINE QUEUE")
+        h_title.setStyleSheet(
+            "color: #64748b; font-size: 10px; font-weight: 800; "
+            "letter-spacing: 1px; background: transparent;"
+        )
 
-        refresh_btn = QPushButton("Refresh Warehouse")
-        refresh_btn.setStyleSheet("font-size: 10px; color: #0d9488; border: none; font-weight: bold;")
+        self._etl_btn = QPushButton("TOGGLE ETL STATE")
+        self._etl_btn.setStyleSheet(
+            "font-size: 9px; font-weight: 800; color: #0d9488; "
+            "border: 1px solid #99f6e4; background: transparent; "
+            "border-radius: 4px; padding: 3px 8px; letter-spacing: 0.5px;"
+        )
+        self._etl_btn.setCursor(Qt.PointingHandCursor)
+        self._etl_btn.setFixedHeight(24)
+        self._etl_btn.clicked.connect(self._on_etl_toggle)
 
-        h_layout.addWidget(title)
+        h_layout.addWidget(h_title)
         h_layout.addStretch()
-        h_layout.addWidget(refresh_btn)
-        layout.addWidget(header_widget)
+        h_layout.addWidget(self._etl_btn)
+        layout.addWidget(header)
 
-        # Table Setup
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["PATIENT ID", "METRIC", "PREDICTION", "ACTION"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setShowGrid(False)
-        self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet("""
-            QTableWidget { border: none; background: white; alternate-background-color: #f8fafc; }
-            QHeaderView::section { background-color: #f8fafc; color: #94a3b8; font-weight: bold; border: none; padding: 10px; font-size: 10px; }
-            QTableWidget::item { padding: 10px; border: none; }
-        """)
+        # Table
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(
+            ["RECORD UID", "PRIMARY METRIC", "LOCAL CONFIDENCE", "DECISION"]
+        )
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setShowGrid(False)
+        self._table.setAlternatingRowColors(True)
+        self._table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Connect row click to show detail drawer
-        self.table.itemClicked.connect(self._on_row_selected)
+        # Pre-populate with prototype mock data
+        self._add_queue_row("#ID-992", "Glucose: 98",  "99.8%", "LOW RISK",    "#059669", "#dcfce7")
+        self._add_queue_row("#ID-993", "Glucose: 165", "88.4%", "ALERT RISK",  "#dc2626", "#fee2e2")
 
-        # Mock Data
-        self.add_table_row("W-1044", "Glucose: 122", "NEGATIVE", "#059669")
-        self.add_table_row("W-1045", "Glucose: 189", "RISK DETECTED", "#dc2626")
-        self.add_table_row("W-1046", "Glucose: 145", "PENDING AI...", "#94a3b8")
+        layout.addWidget(self._table)
+        return card
 
-        layout.addWidget(self.table)
-        self.center_col.addWidget(card)
+    # -------------------------------------------------------------------- #
+    #  Helpers                                                               #
+    # -------------------------------------------------------------------- #
+    def _add_queue_row(self, uid: str, metric: str, confidence: str,
+                       decision: str, text_color: str, bg_color: str):
+        row = self._table.rowCount()
+        self._table.insertRow(row)
 
-    def _setup_kpi_row(self):
-        row = QHBoxLayout()
+        mono_font = QFont("JetBrains Mono, Consolas, monospace")
 
-        for icon, title, val, color in [
-            ("💰", "Cost Saved", "$1,240 (Inference)", "#0d9488"),
-            ("🛡️", "Compliance", "HIPAA Locked", "#2563eb")
-        ]:
-            card = QFrame()
-            card.setObjectName("GlassCard")
-            card.setProperty("class", "GlassCard")
-            card.setFixedHeight(70)
-            l = QHBoxLayout(card)
+        uid_item = QTableWidgetItem(uid)
+        uid_item.setFont(mono_font)
+        self._table.setItem(row, 0, uid_item)
+        self._table.setItem(row, 1, QTableWidgetItem(metric))
+        self._table.setItem(row, 2, QTableWidgetItem(confidence))
 
-            ic = QLabel(icon)
-            ic.setStyleSheet(f"font-size: 20px; background: #f8fafc; padding: 5px; border-radius: 8px;")
+        badge_widget = QLabel(decision)
+        badge_widget.setAlignment(Qt.AlignCenter)
+        badge_widget.setStyleSheet(
+            f"background-color: {bg_color}; color: {text_color}; "
+            "border-radius: 4px; padding: 3px 8px; "
+            "font-size: 9px; font-weight: 800;"
+        )
+        badge_widget.setFixedHeight(22)
 
-            info = QVBoxLayout()
-            t = QLabel(title.upper());
-            t.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: bold;")
-            v = QLabel(val);
-            v.setStyleSheet("color: #1e293b; font-size: 12px; font-weight: bold;")
-            info.addWidget(t);
-            info.addWidget(v)
+        cell = QWidget()
+        cell_lay = QHBoxLayout(cell)
+        cell_lay.setContentsMargins(8, 4, 8, 4)
+        cell_lay.addWidget(badge_widget)
+        cell_lay.addStretch()
+        self._table.setCellWidget(row, 3, cell)
+        self._table.setRowHeight(row, 48)
 
-            l.addWidget(ic);
-            l.addLayout(info);
-            l.addStretch()
-            row.addWidget(card)
+    def _on_etl_toggle(self):
+        """Placeholder ETL toggle — just cycles button label."""
+        current = self._etl_btn.text()
+        if "TOGGLE" in current:
+            self._etl_btn.setText("ETL: ACTIVE ○ STOP")
+        else:
+            self._etl_btn.setText("TOGGLE ETL STATE")
 
-        self.center_col.addLayout(row)
-
-    def _setup_detail_drawer(self):
-        self.detail_drawer = QFrame()
-        self.detail_drawer.setObjectName("GlassCard")
-        self.detail_drawer.setProperty("class", "GlassCard")
-        self.detail_drawer.setFixedWidth(350)
-        self.detail_drawer.hide()  # Start hidden
-
-        layout = QVBoxLayout(self.detail_drawer)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        # Header with Close Button
-        header = QHBoxLayout()
-        self.drawer_title = QLabel("Patient Details")
-        self.drawer_title.setStyleSheet("font-weight: bold; font-size: 14px; color: #1e293b;")
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(24, 24)
-        close_btn.setStyleSheet("border: none; color: #94a3b8; font-weight: bold;")
-        close_btn.clicked.connect(self.detail_drawer.hide)
-        header.addWidget(self.drawer_title)
-        header.addStretch()
-        header.addWidget(close_btn)
-        layout.addLayout(header)
-
-        # Evidence List (Master Lab Values)
-        self.evidence_area = QScrollArea()
-        self.evidence_area.setWidgetResizable(True)
-        self.evidence_area.setStyleSheet("border: none; background: transparent;")
-
-        container = QWidget()
-        self.evidence_layout = QVBoxLayout(container)
-        self.evidence_area.setWidget(container)
-        layout.addWidget(self.evidence_area)
-
-        # Action Row: Verify or Correct
-        btn_row = QHBoxLayout()
-        self.confirm_btn = QPushButton("Confirm Label")
-        self.confirm_btn.setStyleSheet(
-            "background: #0d9488; color: white; font-weight: bold; padding: 10px; border-radius: 6px;")
-
-        self.correct_btn = QPushButton("Correct")
-        self.correct_btn.setStyleSheet(
-            "background: white; border: 1px solid #e2e8f0; color: #ef4444; font-weight: bold; padding: 10px; border-radius: 6px;")
-
-        btn_row.addWidget(self.confirm_btn)
-        btn_row.addWidget(self.correct_btn)
-        layout.addLayout(btn_row)
-
-    def add_table_row(self, pid, metric, status, color):
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-
-        self.table.setItem(row, 0, QTableWidgetItem(pid))
-        self.table.setItem(row, 1, QTableWidgetItem(metric))
-
-        status_item = QTableWidgetItem(status)
-        status_item.setForeground(QColor(color))
-        font = status_item.font()
-        font.setBold(True)
-        status_item.setFont(font)
-        self.table.setItem(row, 2, status_item)
-
-        verify_btn = QPushButton("Inspect")
-        verify_btn.setStyleSheet("color: #0d9488; font-weight: bold; border: none; background: transparent;")
-        verify_btn.setCursor(Qt.PointingHandCursor)
-        # Clicking "Inspect" triggers the same drawer logic
-        verify_btn.clicked.connect(lambda: self._on_row_selected(self.table.item(row, 0)))
-        self.table.setCellWidget(row, 3, verify_btn)
-
-    def _clear_layout(self, layout):
-        """Recursively clears widgets, sub-layouts, and spacers from a layout."""
-        if layout is not None:
-            while layout.count():
-                item = layout.takeAt(0)
-                widget = item.widget()
-                if widget is not None:
-                    widget.deleteLater()
-                else:
-                    self._clear_layout(item.layout())
-
-    def _on_row_selected(self, item):
-        """Populates the detail drawer when a row is selected."""
-        row = item.row()
-        patient_id = self.table.item(row, 0).text()
-
-        # Safely clear all old widgets, sub-layouts, and spacers
-        self._clear_layout(self.evidence_layout)
-
-        self.drawer_title.setText(f"Analysis: {patient_id}")
-
-        # Mocking 'Evidence Disclosure' - showing the real values from the warehouse
-        labs = [
-            ("Blood Glucose", "189 mg/dL", "+0.31 SHAP"),
-            ("BMI", "28.4", "+0.15 SHAP"),
-            ("Age Factor", "55", "+0.08 SHAP"),
-            ("Physical Activity", "Moderate", "-0.09 SHAP")
-        ]
-
-        for name, val, impact in labs:
-            l_row = QHBoxLayout()
-            n_lbl = QLabel(name);
-            n_lbl.setStyleSheet("color: #64748b; font-size: 11px;")
-            v_lbl = QLabel(val);
-            v_lbl.setStyleSheet("font-weight: bold; color: #1e293b; font-size: 11px;")
-            l_row.addWidget(n_lbl);
-            l_row.addStretch();
-            l_row.addWidget(v_lbl)
-
-            # Tiny impact indicator
-            imp_lbl = QLabel(impact)
-            imp_lbl.setStyleSheet(f"font-size: 9px; color: {'#ef4444' if '+' in impact else '#3b82f6'};")
-
-            self.evidence_layout.addLayout(l_row)
-            self.evidence_layout.addWidget(imp_lbl)
-            self.evidence_layout.addSpacing(10)
-
-        self.evidence_layout.addStretch()
-        self.detail_drawer.show()
-
+    # -------------------------------------------------------------------- #
+    #  Prediction                                                            #
+    # -------------------------------------------------------------------- #
     def _emit_predict(self):
         try:
             val_map = {
-                "glucose": float(self.inputs["glucose"].text() or 0.0),
-                "age": float(self.inputs["age"].text() or 0.0),
-                "bmi": float(self.inputs["bmi"].text() or 0.0),
+                "glucose": float(self._inputs["glucose"].text() or 0.0),
+                "age":     float(self._inputs["age"].text()     or 0.0),
+                "bmi":     float(self._inputs["bmi"].text()     or 0.0),
             }
-            self.predict_btn.setText("PREDICTING...")
-            self.predict_btn.setDisabled(True)
-            self.predict_requested.emit(val_map)
         except ValueError:
-             QMessageBox.warning(self, "Invalid Input", "Please enter valid numbers.")
+            QMessageBox.warning(self, "Invalid Input", "Please enter valid numbers.")
+            return
+
+        self._run_btn.setText("PREDICTING…")
+        self._run_btn.setEnabled(False)
+        self.predict_requested.emit(val_map)
 
     @Slot(object)
     def display_prediction_result(self, result):
-        self.predict_btn.setText("PREDICT FOR PATIENT")
-        self.predict_btn.setDisabled(False)
+        self._run_btn.setText("RUN CACHED MODEL")
+        self._run_btn.setEnabled(True)
 
         if isinstance(result, Exception):
             QMessageBox.critical(self, "Prediction Error", str(result))
             return
-            
+
         res: PredictionResult = result
-        
-        # Display the result. For now, add it as a top row to the warehouse table.
-        # In a real app this would go to a specific "Recent Results" area or alert.
-        color = "#059669" if res.risk_label == "Low" else "#dc2626"
-        self.table.insertRow(0)
-        self.table.setItem(0, 0, QTableWidgetItem("Manual-Entry"))
-        self.table.setItem(0, 1, QTableWidgetItem(f"Prob: {res.probability:.2f}"))
-        
-        status_item = QTableWidgetItem(res.risk_label)
-        status_item.setForeground(QColor(color))
-        font = status_item.font()
-        font.setBold(True)
-        status_item.setFont(font)
-        self.table.setItem(0, 2, status_item)
-        
-        # We could also use QMessageBox to explicitly inform the user right now
-        QMessageBox.information(
-            self, 
-            "Prediction Complete", 
-            f"Risk Label: {res.risk_label}\nProbability: {res.probability:.2%}\n\n{res.summary}"
+        score = f"{res.probability:.3f}"
+        is_high = res.risk_label != "Low"
+
+        self._score_lbl.setText(score)
+        self._result_card.show()
+
+        if is_high:
+            self._result_card.setStyleSheet(
+                "background: #fff1f2; border: 1px solid #fecdd3; border-radius: 12px;"
+            )
+            self._score_lbl.setStyleSheet(
+                "font-size: 18px; font-weight: 900; color: #9f1239;"
+            )
+            self._risk_lbl.setText("POSITIVE / HIGH RISK — REVIEW REQUIRED")
+            self._risk_lbl.setStyleSheet(
+                "font-size: 9px; font-weight: 700; color: #be123c; letter-spacing: 0.5px;"
+            )
+        else:
+            self._result_card.setStyleSheet(
+                "background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 12px;"
+            )
+            self._score_lbl.setStyleSheet(
+                "font-size: 18px; font-weight: 900; color: #134e4a;"
+            )
+            self._risk_lbl.setText("NEGATIVE / LOW RISK BASELINE")
+            self._risk_lbl.setStyleSheet(
+                "font-size: 9px; font-weight: 700; color: #0f766e; letter-spacing: 0.5px;"
+            )
+
+        # Also add to queue table
+        decision = "ALERT RISK" if is_high else "LOW RISK"
+        text_color = "#dc2626" if is_high else "#059669"
+        bg_color   = "#fee2e2" if is_high else "#dcfce7"
+        self._add_queue_row(
+            "#MANUAL", f"Glucose: {int(self._inputs['glucose'].text() or 0)}",
+            f"{res.probability:.1%}", decision, text_color, bg_color
         )

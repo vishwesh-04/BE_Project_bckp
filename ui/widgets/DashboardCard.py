@@ -8,9 +8,18 @@ class DashboardCard(QFrame):
 
     def __init__(self, title, value, subtext, border_color="#0d9488", link_text=""):
         super().__init__()
-        self.setProperty("class", "GlassCard")
-        # Inline style for the dynamic border color
-        self.setStyleSheet(f"border-left: 4px solid {border_color};")
+
+        self.setStyleSheet(f"""
+            #DashboardCard {{
+                background-color: #ffffff;
+                border-left: 4px solid {border_color};
+                border-radius: 8px;
+            }}
+            QLabel {{
+                background-color: transparent;
+                border: none;
+            }}
+        """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -44,8 +53,18 @@ class DashboardCard(QFrame):
     def update_content(self, title, value, border_color="#0d9488"):
         self.title_lbl.setText(title.upper())
         self.value_lbl.setText(value)
-        self.setStyleSheet(f"border-left: 4px solid {border_color};")
-        self.sub_lbl.setStyleSheet(f"color: {border_color}; font-weight: bold; font-size: 11px;")
+        self.setStyleSheet(f"""
+            #DashboardCard {{
+                background-color: #ffffff;
+                border-left: 4px solid {border_color};
+                border-radius: 8px;
+            }}
+            QLabel {{
+                background-color: transparent;
+                border: none;
+            }}
+        """)
+        # self.sub_lbl.setStyleSheet(f"color: {border_color}; font-weight: bold; font-size: 11px;")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:

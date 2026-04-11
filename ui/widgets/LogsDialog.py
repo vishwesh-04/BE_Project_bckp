@@ -6,6 +6,7 @@ from PySide6.QtGui import QFont
 class LogsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        # self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
         self.setWindowTitle("Local Training Runtime Logs")
         self.setMinimumSize(700, 450)
         # Remove default title bar for a cleaner look if desired,
@@ -17,7 +18,7 @@ class LogsDialog(QDialog):
 
         # 1. Custom Header
         header = QFrame()
-        header.setStyleSheet("background-color: white; border-bottom: 1px solid #e2e8f0;")
+        header.setStyleSheet("background-color: #0d9488; border-bottom: 3px solid #e2e8f0;")
         header_layout = QHBoxLayout(header)
 
         title = QLabel("Local Training Runtime Logs")
@@ -32,7 +33,7 @@ class LogsDialog(QDialog):
         header_layout.addWidget(title)
         header_layout.addStretch()
         header_layout.addWidget(close_btn)
-        layout.addWidget(header)
+        # layout.addWidget(header)
 
         # 2. Terminal Area
         self.terminal = QTextEdit()
