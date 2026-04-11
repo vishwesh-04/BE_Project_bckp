@@ -48,6 +48,13 @@ QWidget {
     padding: 4px 10px;
 }
 
+#EtlPillInactive {
+    background-color: #fef2f2;
+    border: 1px solid #fee2e2;
+    border-radius: 20px;
+    padding: 4px 10px;
+}
+
 #EtlText {
     font-size: 9.5px;
     font-weight: 800;

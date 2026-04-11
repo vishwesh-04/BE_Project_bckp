@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QFont
 
 from client.inference_engine import PredictionResult
 
@@ -50,7 +50,7 @@ class InferenceTab(QWidget):
         title_row = QHBoxLayout()
         title = QLabel("Ad-hoc Prediction")
         title.setStyleSheet(
-            "font-size: 12px; font-weight: 700; color: #1e293b; letter-spacing: 0.5px;"
+            "font-size: 12px; font-weight: 700; color: #1e293b; letter-spacing: 0.5px; border: none;"
         )
         title_row.addWidget(title)
         layout.addLayout(title_row)
@@ -66,7 +66,7 @@ class InferenceTab(QWidget):
             lbl = QLabel(label_text.upper())
             lbl.setStyleSheet(
                 "color: #94a3b8; font-size: 9px; font-weight: 800; "
-                "letter-spacing: 1px;"
+                "letter-spacing: 1px; border: none;"
             )
             edit = QLineEdit()
             edit.setPlaceholderText(placeholder)
@@ -80,7 +80,7 @@ class InferenceTab(QWidget):
         self._run_btn = QPushButton("PREDICT")
         self._run_btn.setProperty("class", "PrimaryButton")
         self._run_btn.setFixedHeight(42)
-        self._run_btn.setCursor(Qt.PointingHandCursor)
+        self._run_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._run_btn.setStyleSheet(
             "background-color: #1e293b; color: white; font-weight: 800; "
             "font-size: 10px; letter-spacing: 1px; border-radius: 10px; "
@@ -94,25 +94,25 @@ class InferenceTab(QWidget):
         self._result_card.setObjectName("ResultCard")
         self._result_card.hide()
         rc_layout = QVBoxLayout(self._result_card)
-        rc_layout.setContentsMargins(14, 12, 14, 12)
-        rc_layout.setSpacing(2)
+        rc_layout.setContentsMargins(20, 16, 20, 16)
+        rc_layout.setSpacing(4)
 
         score_row = QHBoxLayout()
-        score_label = QLabel("RESULT SCORE")
-        score_label.setStyleSheet(
-            "font-size: 9px; font-weight: 800; color: #0f766e; letter-spacing: 1px;"
+        self._score_text_label = QLabel("RESULT SCORE")
+        self._score_text_label.setStyleSheet(
+            "font-size: 9px; font-weight: 800; color: #0f766e; letter-spacing: 1px; border: none;"
         )
-        self._score_lbl = QLabel("0.00")
+        self._score_lbl = QLabel("0.0%")
         self._score_lbl.setStyleSheet(
-            "font-size: 18px; font-weight: 900; color: #134e4a;"
+            "font-size: 18px; font-weight: 900; color: #134e4a; border: none;"
         )
-        score_row.addWidget(score_label)
+        score_row.addWidget(self._score_text_label)
         score_row.addStretch()
         score_row.addWidget(self._score_lbl)
 
         self._risk_lbl = QLabel("NEGATIVE / LOW RISK BASELINE")
         self._risk_lbl.setStyleSheet(
-            "font-size: 9px; font-weight: 700; color: #0f766e; letter-spacing: 0.5px;"
+            "font-size: 11px; font-weight: 800; color: #0f766e; letter-spacing: 0.5px; border: none;"
         )
 
         rc_layout.addLayout(score_row)
@@ -150,7 +150,7 @@ class InferenceTab(QWidget):
         h_title = QLabel("LIVE PIPELINE QUEUE")
         h_title.setStyleSheet(
             "color: #64748b; font-size: 10px; font-weight: 800; "
-            "letter-spacing: 1px; background: transparent;"
+            "letter-spacing: 1px; background: transparent; border: none;"
         )
 
         self._etl_btn = QPushButton("TOGGLE ETL STATE")
@@ -159,7 +159,7 @@ class InferenceTab(QWidget):
             "border: 1px solid #99f6e4; background: transparent; "
             "border-radius: 4px; padding: 3px 8px; letter-spacing: 0.5px;"
         )
-        self._etl_btn.setCursor(Qt.PointingHandCursor)
+        self._etl_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._etl_btn.setFixedHeight(24)
         self._etl_btn.clicked.connect(self._on_etl_toggle)
 
@@ -173,13 +173,14 @@ class InferenceTab(QWidget):
         self._table.setHorizontalHeaderLabels(
             ["RECORD UID", "PRIMARY METRIC", "LOCAL CONFIDENCE", "DECISION"]
         )
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.verticalHeader().setVisible(False)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setShowGrid(False)
         self._table.setAlternatingRowColors(True)
-        self._table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._table.setStyleSheet("QTableWidget::item { border: none; }")
 
         # Pre-populate with prototype mock data
         self._add_queue_row("#ID-992", "Glucose: 98",  "99.8%", "LOW RISK",    "#059669", "#dcfce7")
@@ -205,10 +206,10 @@ class InferenceTab(QWidget):
         self._table.setItem(row, 2, QTableWidgetItem(confidence))
 
         badge_widget = QLabel(decision)
-        badge_widget.setAlignment(Qt.AlignCenter)
+        badge_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
         badge_widget.setStyleSheet(
             f"background-color: {bg_color}; color: {text_color}; "
-            "border-radius: 4px; padding: 3px 8px; "
+            "border: none; border-radius: 4px; padding: 3px 8px; "
             "font-size: 9px; font-weight: 800;"
         )
         badge_widget.setFixedHeight(22)
@@ -257,7 +258,7 @@ class InferenceTab(QWidget):
             return
 
         res: PredictionResult = result
-        score = f"{res.probability:.3f}"
+        score = f"{res.probability:.1%}"
         is_high = res.risk_label != "Low"
 
         self._score_lbl.setText(score)
@@ -267,30 +268,36 @@ class InferenceTab(QWidget):
             self._result_card.setStyleSheet(
                 "background: #fff1f2; border: 1px solid #fecdd3; border-radius: 12px;"
             )
+            self._score_text_label.setStyleSheet(
+                "font-size: 9px; font-weight: 800; color: #be123c; letter-spacing: 1px; border: none;"
+            )
             self._score_lbl.setStyleSheet(
-                "font-size: 18px; font-weight: 900; color: #9f1239;"
+                "font-size: 18px; font-weight: 900; color: #9f1239; border: none;"
             )
             self._risk_lbl.setText("POSITIVE / HIGH RISK — REVIEW REQUIRED")
             self._risk_lbl.setStyleSheet(
-                "font-size: 9px; font-weight: 700; color: #be123c; letter-spacing: 0.5px;"
+                "font-size: 11px; font-weight: 800; color: #be123c; letter-spacing: 0.5px; border: none;"
             )
         else:
             self._result_card.setStyleSheet(
                 "background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 12px;"
             )
+            self._score_text_label.setStyleSheet(
+                "font-size: 9px; font-weight: 800; color: #0f766e; letter-spacing: 1px; border: none;"
+            )
             self._score_lbl.setStyleSheet(
-                "font-size: 18px; font-weight: 900; color: #134e4a;"
+                "font-size: 18px; font-weight: 900; color: #134e4a; border: none;"
             )
             self._risk_lbl.setText("NEGATIVE / LOW RISK BASELINE")
             self._risk_lbl.setStyleSheet(
-                "font-size: 9px; font-weight: 700; color: #0f766e; letter-spacing: 0.5px;"
+                "font-size: 11px; font-weight: 800; color: #0f766e; letter-spacing: 0.5px; border: none;"
             )
 
-        # Also add to queue table
-        decision = "ALERT RISK" if is_high else "LOW RISK"
-        text_color = "#dc2626" if is_high else "#059669"
-        bg_color   = "#fee2e2" if is_high else "#dcfce7"
-        self._add_queue_row(
-            "#MANUAL", f"Glucose: {int(self._inputs['glucose'].text() or 0)}",
-            f"{res.probability:.1%}", decision, text_color, bg_color
-        )
+        # # Also add to queue table
+        # decision = "ALERT RISK" if is_high else "LOW RISK"
+        # text_color = "#dc2626" if is_high else "#059669"
+        # bg_color   = "#fee2e2" if is_high else "#dcfce7"
+        # self._add_queue_row(
+        #     "#MANUAL", f"Glucose: {int(self._inputs['glucose'].text() or 0)}",
+        #     f"{res.probability:.1%}", decision, text_color, bg_color
+        # )

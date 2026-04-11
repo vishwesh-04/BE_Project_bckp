@@ -1,6 +1,7 @@
 import sys
 import os
 
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QStackedWidget, QFrame, QLabel, QCheckBox
@@ -105,9 +106,6 @@ class ClientUi(QMainWindow):
         self.inference_tab.predict_requested.connect(self.fl_worker.run_prediction)
         self.fl_worker.prediction_result.connect(self.inference_tab.display_prediction_result)
 
-        # ETL toggle: config tab → topbar indicator (and vice-versa via button)
-        self.config_tab.etl_toggled.connect(self._on_etl_state_changed)
-
         # Dashboard "Edit Configuration" button → jump to settings tab
         self.dashboard_tab.goto_settings_requested.connect(
             lambda: self._on_tab_changed(TAB_SETTINGS)
@@ -118,6 +116,11 @@ class ClientUi(QMainWindow):
         self.history_tab.open_logs_requested.connect(
             lambda _round: self.config_tab.show_logs()
         )
+
+        # ── Tie hidden toggle to pill updates ─────────────────────────────
+        self.ready_toggle.toggled.connect(self._on_ready_ui_update)
+        # Manually trigger initial state to configure colors properly
+        self._on_ready_ui_update(self.ready_toggle.isChecked())
 
     # ──────────────────────────────────────────────────────────────────────
     #  Topbar
@@ -130,57 +133,74 @@ class ClientUi(QMainWindow):
         layout.setContentsMargins(28, 0, 28, 0)
         layout.setSpacing(20)
 
-        # ── Left side: page title + ETL pill ─────────────────────────────
+        # Hidden Checkbox functioning as logical state (Client is ready/paused)
+        self.ready_toggle = QCheckBox()
+        self.ready_toggle.setChecked(True)
+        self.ready_toggle.hide()
+
+        # ── Left side: page title ────────────────────────────────────────
         left_group = QHBoxLayout()
         left_group.setSpacing(16)
 
         self.page_title_lbl = QLabel(TAB_TITLES[TAB_DASHBOARD])
         self.page_title_lbl.setObjectName("TopbarTitle")
 
-        # ETL status pill
-        etl_pill = QFrame()
-        etl_pill.setObjectName("EtlPill")
-        etl_layout = QHBoxLayout(etl_pill)
-        etl_layout.setContentsMargins(10, 4, 10, 4)
-        etl_layout.setSpacing(6)
-
-        self.etl_dot = QLabel("●")
-        self.etl_dot.setStyleSheet("color: #0d9488; font-size: 8px;")
-
-        self.etl_label = QLabel("ETL Stream: Idle")
-        self.etl_label.setObjectName("EtlText")
-
-        etl_layout.addWidget(self.etl_dot)
-        etl_layout.addWidget(self.etl_label)
-
-        left_group.addWidget(self.page_title_lbl)
-        left_group.addWidget(etl_pill)
-
+        left_group.addWidget(self.page_title_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(left_group)
         layout.addStretch()
 
-        # ── Right side: ready toggle + server addr + node badge ───────────
+        # ── Right side: ready pill + server addr + node badge ────────────
         right_group = QHBoxLayout()
-        right_group.setSpacing(20)
+        right_group.setSpacing(16)
 
-        # Ready / Mute toggle
-        self.ready_toggle = QCheckBox("Ready")
-        self.ready_toggle.setChecked(True)
-        self.ready_toggle.setToolTip("Toggle to pause/resume participating in federated rounds.")
-        self.ready_toggle.toggled.connect(self.on_ready_toggled)
+        # Ready Status Pill (Togglable visually, logic relies on `ready_toggle`)
+        self.ready_pill = QFrame()
+        self.ready_pill.setObjectName("EtlPill")
+        self.ready_pill.setFixedHeight(26)
+        self.ready_pill.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ready_pill.mousePressEvent = lambda e: self.ready_toggle.toggle()
+
+        pill_layout = QHBoxLayout(self.ready_pill)
+        pill_layout.setContentsMargins(10, 4, 10, 4)
+        pill_layout.setSpacing(6)
+
+        self.status_dot = QLabel("●")
+        self.status_dot.setStyleSheet("color: #0d9488; font-size: 8px;")
+
+        self.status_label = QLabel("Node: Ready")
+        self.status_label.setObjectName("EtlText")
+
+        pill_layout.addWidget(self.status_dot)
+        pill_layout.addWidget(self.status_label)
+
+        right_group.addWidget(self.ready_pill)
+
+        # Vertical divider
+        div = QFrame()
+        div.setFrameShape(QFrame.Shape.VLine)
+        div.setStyleSheet("color: #cbd5e1;")
+        div.setFixedWidth(1)
+        right_group.addWidget(div)
 
         # Server info
         server_col = QWidget()
+        server_col.setStyleSheet("background: transparent; border: none;")
         server_layout = QVBoxLayout(server_col)
         server_layout.setContentsMargins(0, 0, 0, 0)
-        server_layout.setSpacing(1)
+        server_layout.setSpacing(2)
+        server_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
+
 
         server_lbl_title = QLabel("SERVER ADDR")
-        server_lbl_title.setObjectName("NodeInfoLabel")
+        server_lbl_title.setStyleSheet(
+            "font-size: 9px; font-weight: 800; color: #64748b; letter-spacing: 0.5px; border: none;"
+        )
+        server_lbl_title.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         node_id = os.environ.get("CLIENT_ID", "1")
         self.server_addr_lbl = QLabel("127.0.0.1:45678")
-        self.server_addr_lbl.setObjectName("NodeIdLabel")
+        self.server_addr_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #1e293b; border: none;")
+        self.server_addr_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         server_layout.addWidget(server_lbl_title)
         server_layout.addWidget(self.server_addr_lbl)
@@ -188,16 +208,8 @@ class ClientUi(QMainWindow):
         # Node badge
         self.node_badge = QLabel(node_id)
         self.node_badge.setObjectName("NodeBadge")
-        self.node_badge.setAlignment(Qt.AlignCenter)
+        self.node_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Vertical divider
-        div = QFrame()
-        div.setFrameShape(QFrame.VLine)
-        div.setStyleSheet("color: #e2e8f0;")
-        div.setFixedWidth(1)
-
-        right_group.addWidget(self.ready_toggle)
-        right_group.addWidget(div)
         right_group.addWidget(server_col)
         right_group.addWidget(self.node_badge)
 
@@ -217,20 +229,23 @@ class ClientUi(QMainWindow):
         self.sidebar.set_active_tab(index)
 
     @Slot(bool)
-    def _on_etl_state_changed(self, active: bool):
-        """Update the topbar ETL indicator when the toggle is pressed."""
-        if active:
-            self.etl_dot.setStyleSheet("color: #f59e0b; font-size: 8px;")
-            self.etl_label.setText("ETL Stream: Processing…")
-            self.etl_label.setStyleSheet(
-                "font-size: 9.5px; font-weight: 800; color: #b45309; letter-spacing: 1px;"
-            )
-        else:
-            self.etl_dot.setStyleSheet("color: #0d9488; font-size: 8px;")
-            self.etl_label.setText("ETL Stream: Idle")
-            self.etl_label.setStyleSheet(
+    def _on_ready_ui_update(self, checked: bool):
+        """Update the pill UI when the hidden toggle changes."""
+        if checked:
+            self.status_dot.setStyleSheet("color: #0d9488; font-size: 8px;")
+            self.status_label.setText("Node: Ready")
+            self.status_label.setStyleSheet(
                 "font-size: 9.5px; font-weight: 800; color: #0f766e; letter-spacing: 1px;"
             )
+            self.ready_pill.setObjectName("EtlPill")
+        else:
+            self.status_dot.setStyleSheet("color: #ef4444; font-size: 8px;")
+            self.status_label.setText("Node: Paused")
+            self.status_label.setStyleSheet(
+                "font-size: 9.5px; font-weight: 800; color: #b45309; letter-spacing: 1px;"
+            )
+            self.ready_pill.setObjectName("EtlPillInactive")
+        self.on_ready_toggled(checked)
 
     @Slot(bool)
     def on_ready_toggled(self, checked: bool):
@@ -272,7 +287,13 @@ class ClientUi(QMainWindow):
                     self.setStyleSheet(f.read())
                     print(f"[STYLE] Loaded QSS from: {qss_path}")
             except FileNotFoundError:
-                print(f"[STYLE] ❌ Not found: {qss_path}")
+                print(f"[STYLE] ❌ Not found: {qss_path}")        # Load Fonts
+        font_path = os.path.join(base_dir, "fonts", "Inter-Regular.ttf")
+        if os.path.exists(font_path):
+            QFontDatabase.addApplicationFont(font_path)
+        else:
+            # Fallback for resource-based loading or relative paths
+            QFontDatabase.addApplicationFont("fonts/Inter-Regular.ttf")
 
     # ──────────────────────────────────────────────────────────────────────
     #  Graceful shutdown
