@@ -2,7 +2,7 @@ import os
 
 from dotenv import load_dotenv
 from flwr.common import Context, ndarrays_to_parameters
-from flwr.server import LegacyContext, ServerApp, ServerConfig, SimpleClientManager
+from flwr.server import LegacyContext, ServerApp, ServerConfig
 from flwr.server.workflow import SecAggPlusWorkflow
 
 from common.config import (
@@ -27,6 +27,7 @@ from .state import get_state_store
 from .custom_strategy import FeatureParityFedAvg
 from .evaluator import get_evaluate_fn
 from .event_driven_workflow import EventDrivenWorkflow
+from .client_manager import StatefulClientManager
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 configure_logging(TRAINING_LOG_PATH, "server.training")
@@ -41,12 +42,13 @@ def _build_legacy_context(context: Context, strategy: FeatureParityFedAvg) -> Le
         "config": ServerConfig(num_rounds=TRAINING_SESSION_ROUNDS),
         "strategy": strategy,
     }
+    client_manager = StatefulClientManager()
     try:
-        return LegacyContext(client_manager=SimpleClientManager(), **kwargs)
+        return LegacyContext(client_manager=client_manager, **kwargs)
     except TypeError:
         legacy_context = LegacyContext(**kwargs)
         if not hasattr(legacy_context, "client_manager"):
-            legacy_context.client_manager = SimpleClientManager()
+            legacy_context.client_manager = client_manager
         return legacy_context
 
 

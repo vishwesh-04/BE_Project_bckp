@@ -13,8 +13,6 @@ class ConfigurationTab(QWidget):
     server_updated = Signal(str)
     # Signal to request starting the FL Client node (url, epochs, batch_size, lr)
     sync_requested = Signal(str, int, int, float)
-    # Signal to gently stop the FL connected node
-    stop_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -104,31 +102,50 @@ class ConfigurationTab(QWidget):
     @Slot(bool, str)
     def on_fl_client_stopped(self, success: bool, message: str):
         if success:
-            if message == "Paused":
-                self.training_card.update_content("Status: Paused", "Not Ready (muted)", "#f59e0b")
+            if "Paused" in message:
+                # This branch is reached when the topbar toggle mutes the client
+                # while connected — client stays connected but skips rounds.
+                self.training_card.update_content("Status: Paused", "Not participating (muted)", "#f59e0b")
             else:
-                self.training_card.update_content("Status: Idle", "Ready for next round", "#3b82f6")
+                self.training_card.update_content("Status: Idle", "Disconnected from server", "#3b82f6")
+                self._set_ui_state_connected(False)
         else:
             self.training_card.update_content("Status: Error", "Connection failed. Check logs.", "#ef4444")
             self.append_log(f"[ERROR] {message}")
-            
-        self._set_ui_state_connected(False)
+            self._set_ui_state_connected(False)
 
     def _set_ui_state_connected(self, connected: bool):
         if connected:
-            self.set_btn.setText("PAUSE (NOT READY)")
-            self.set_btn.setStyleSheet("background-color: #f59e0b; border-color: #f59e0b; color: white;")
+            self.set_btn.setText("CONNECTED")
+            self.set_btn.setEnabled(False)
+            self.set_btn.setStyleSheet(
+                "background-color: #334155; border-color: #334155; color: #64748b;"
+            )
             self.server_input.setReadOnly(True)
             self.epochs_input.setReadOnly(True)
             self.batch_input.setReadOnly(True)
             self.lr_input.setReadOnly(True)
         else:
-            self.set_btn.setText("CONNECT/RESUME")
+            self.set_btn.setText("CONNECT")
+            self.set_btn.setEnabled(True)
             self.set_btn.setStyleSheet("")
             self.server_input.setReadOnly(False)
             self.epochs_input.setReadOnly(False)
             self.batch_input.setReadOnly(False)
             self.lr_input.setReadOnly(False)
+
+    @Slot(bool)
+    def set_ready_state(self, is_ready: bool):
+        """
+        Called by the topbar toggle to reflect readiness state in the training card
+        WITHOUT modifying the connect/disconnect state of the button.
+        Only takes effect when already connected (button is disabled / CONNECTED).
+        """
+        if not self.set_btn.isEnabled():  # i.e., currently connected
+            if is_ready:
+                self.training_card.update_content("Status: Connected", "Listening for server...", "#0d9488")
+            else:
+                self.training_card.update_content("Status: Paused", "Not participating (muted)", "#f59e0b")
 
     def _init_server_card(self):
         """Creates the card for setting the Federated Server URL."""
@@ -237,11 +254,6 @@ class ConfigurationTab(QWidget):
 
     def handle_server_change(self):
         """Handles updating the server endpoint and connecting."""
-        if "PAUSE" in self.set_btn.text():
-            print("[SYSTEM] Pausing participation (Not Ready)")
-            self.stop_requested.emit()
-            return
-            
         new_url = self.server_input.text()
         try:
             epochs = int(self.epochs_input.text())

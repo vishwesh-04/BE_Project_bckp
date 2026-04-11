@@ -1,6 +1,5 @@
 import sys
 import os
-import json
 
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt, QFile, QTextStream, QThread
@@ -46,15 +45,18 @@ class ClientUi(QMainWindow):
         self.insights_tab = InsightsTab()
 
         # Wire up Controller to the Tabs
-        # 1. Configuration Tab (Sync + Real-time Training Status)
+        # 1. Configuration Tab (start + real-time training status)
         self.config_tab.sync_requested.connect(self.fl_worker.start_fl_client)
-        self.config_tab.stop_requested.connect(self.fl_worker.stop_fl_client)
+        # NOTE: stop_requested removed — topbar toggle is the sole readiness control.
         self.fl_worker.training_started.connect(self.config_tab.on_training_started)
         self.fl_worker.training_ended.connect(self.config_tab.on_training_ended)
         
-        # Connect client started signal to UI
+        # Connect client started / stopped signals to UI
         self.fl_worker.fl_client_started.connect(self.config_tab.on_fl_client_started)
         self.fl_worker.fl_client_stopped.connect(self.config_tab.on_fl_client_stopped)
+        
+        # Snap checkbox back when mute is rejected (client is mid-training)
+        self.fl_worker.mute_rejected.connect(self.on_mute_rejected)
         
         self.fl_worker.log_message.connect(self.config_tab.append_log)
         
@@ -82,7 +84,7 @@ class ClientUi(QMainWindow):
         topbar_layout.addWidget(QLabel("Node Configuration"))
         topbar_layout.addStretch()
         
-        # Ready Toggle
+        # Ready Toggle — the SINGLE source of truth for client readiness
         self.ready_toggle = QCheckBox("Ready")
         self.ready_toggle.setChecked(True)
         self.ready_toggle.setToolTip("Toggle to pause/resume participating in federated rounds.")
@@ -102,12 +104,41 @@ class ClientUi(QMainWindow):
         main_layout.setStretch(1, 4)
 
     def on_ready_toggled(self, checked: bool):
-        ready_file = os.getenv("READY_FILE_PATH", "/tmp/client_ready.json")
-        try:
-            with open(ready_file, "w") as f:
-                json.dump({"ready": checked}, f)
-        except Exception as e:
-            print("Failed to write ready file:", e)
+        """
+        Single source of truth for client readiness.
+        Routes directly to the thread-safe mute/unmute API on the worker.
+        Also updates the config tab's training card for visual consistency.
+        """
+        # Route through the worker's mute/unmute API so the
+        # FLClientRuntime._muted Event is updated correctly on the FL thread.
+        if checked:
+            self.fl_worker.resume_fl_client()
+            print("[SYSTEM] Resuming participation (Ready)")
+        else:
+            self.fl_worker.stop_fl_client()
+            print("[SYSTEM] Pausing participation (Not Ready)")
+
+        # Reflect the new readiness in the config tab's training card
+        # (no-op if not connected — set_ready_state checks internally).
+        self.config_tab.set_ready_state(checked)
+
+    def on_mute_rejected(self):
+        """
+        Called when mute() was rejected because a training round is in progress.
+        Snap the checkbox back to checked (Ready) so the UI matches reality.
+        """
+        # Block signals temporarily to avoid triggering on_ready_toggled again.
+        self.ready_toggle.blockSignals(True)
+        self.ready_toggle.setChecked(True)
+        self.ready_toggle.blockSignals(False)
+        print(
+            "[SYSTEM] Cannot pause: training round in progress. "
+            "Toggle will re-enable after the round completes."
+        )
+        self.fl_worker.log_message.emit(
+            "[WARNING] Mute rejected — client is currently training. "
+            "Try again after the round completes."
+        )
 
     def load_resources(self):
         # This gets the directory where main.py actually lives
@@ -128,14 +159,34 @@ class ClientUi(QMainWindow):
                 print(f"❌ Error: Still can't find {qss_path}")
 
     def closeEvent(self, event):
-        # Cleanup thread gracefully when window closes
+        """Graceful shutdown: stop workers before Qt tears down C++ objects."""
         print("[SYSTEM] Application closing, shutting down workers...")
-        self.fl_worker.stop_fl_client()
+
+        # 1. Defensively disconnect signals that could fire into dead objects
+        #    after threads are terminated.
+        for sig in (self.fl_worker.mute_rejected, self.fl_worker.fl_client_stopped):
+            try:
+                sig.disconnect()
+            except Exception:
+                pass
+
+        # 2. Directly unmute the runtime (no signal emission — we're closing).
+        worker = getattr(self.fl_worker, 'fl_system_worker', None)
+        if worker and worker.fl_client:
+            try:
+                worker.fl_client.unmute()  # release any held lock cleanly
+            except Exception:
+                pass
+
+        # 3. Shut down background threads (terminates the blocked gRPC call).
         self.fl_worker.shutdown()
 
+        # 4. Quit the outer worker_thread (the one FLWorker was moved to).
         self.worker_thread.quit()
-        self.worker_thread.wait()
+        self.worker_thread.wait(3000)  # wait up to 3s
+
         event.accept()
+
 
 
 if __name__ == '__main__':

@@ -58,6 +58,7 @@ class FeatureParityFedAvg(FedAvg):
         self.last_known_hash: dict[str, str] = {}
         self.round_candidates: dict[int, dict[str, str]] = {}
         self._prepared_clients: dict[int, list[ClientProxy]] = {}
+        self._client_manager: ClientManager | None = None  # cached ref
         self.artifact_dir = artifact_dir
         self.reference_data_path = reference_data_path
         self.dashboard_feature_keys = dashboard_feature_keys or list(DASHBOARD_FEATURE_KEYS)
@@ -153,16 +154,49 @@ class FeatureParityFedAvg(FedAvg):
                 properties = self._request_properties(client, server_round)
             except Exception as exc:
                 log(WARNING, "Failed to fetch readiness from client %s: %s", client_id, exc)
+                # Mark as not-ready in the client manager so the state machine
+                # reflects that we couldn't reach it (e.g. reconnect in progress).
+                if hasattr(client_manager, "mark_not_ready"):
+                    client_manager.mark_not_ready(client_id)
                 continue
 
             data_hash = str(properties.get("data_hash", ""))
             is_ready = bool(properties.get("ready", False))
+            status = str(properties.get("status", "unknown"))
+
+            if not is_ready:
+                LOGGER.debug(
+                    "Client %s not ready (status=%s) for round %s.",
+                    client_id, status, server_round,
+                )
+                if hasattr(client_manager, "mark_not_ready"):
+                    client_manager.mark_not_ready(client_id)
+
             if not data_hash:
+                # Client has no training data — log at WARN the first time
+                # (mark_not_ready already handles state; data_hash='' means
+                #  this client can never be selected until data arrives).
+                LOGGER.debug(
+                    "Client %s has empty data_hash (status=%s); skipping selection.",
+                    client_id, status,
+                )
                 continue
 
             if data_hash in session_hashes:
                 current_hashes[client_id] = data_hash
                 if is_ready:
+                    # This client's data_hash is already part of the current session,
+                    # meaning it participated in at least one earlier round.
+                    # If it appears as ready here, it has reconnected after a dropout.
+                    # Log clearly so reconnect events are visible.
+                    if hasattr(client_manager, "set_ready"):
+                        was_promoted = client_manager.set_ready(client_id)
+                        if was_promoted:
+                            LOGGER.info(
+                                "Client %s reconnected (session hash already known) "
+                                "and is now READY for round %s.",
+                                client_id, server_round,
+                            )
                     ready_session_clients.append(client)
                 continue
 
@@ -172,6 +206,8 @@ class FeatureParityFedAvg(FedAvg):
 
             current_hashes[client_id] = data_hash
             if is_ready:
+                if hasattr(client_manager, "set_ready"):
+                    client_manager.set_ready(client_id)
                 ready_new_clients.append(client)
 
         combined_clients = ready_session_clients
@@ -222,6 +258,14 @@ class FeatureParityFedAvg(FedAvg):
         if not selected_clients:
             return []
 
+        # Wire the client manager state machine: transition selected clients
+        # from READY → ACTIVE for this round.
+        self._client_manager = client_manager  # cache for use in aggregate_fit
+        if hasattr(client_manager, "assign_to_round"):
+            for client in selected_clients:
+                cid = self._get_client_id(client)
+                client_manager.assign_to_round(cid, server_round)
+
         config: dict[str, Scalar] = {}
         if self.on_fit_config_fn is not None:
             config.update(self.on_fit_config_fn(server_round))
@@ -232,23 +276,54 @@ class FeatureParityFedAvg(FedAvg):
         return [(client, fit_ins) for client in selected_clients]
 
     def aggregate_fit(self, server_round: int, results, failures):
-        if not results:
-            log(WARNING, "Round %s produced no fit results; keeping previous global model", server_round)
-            self._prepared_clients.pop(server_round, None)
-            return self._current_parameters(), {"round_failed": True}
+        # ------------------------------------------------------------------
+        # Separate results into: fully-trained vs. skipped (not_ready).
+        # Skipped results carry stale weights with num_examples=0; including
+        # them in FedAvg dilutes the aggregate and can introduce NaN.
+        # ------------------------------------------------------------------
+        active_results = []
+        skipped_cids: list[str] = []
+        for client_proxy, fit_res in results:
+            cid = self._get_client_id(client_proxy)
+            metrics = fit_res.metrics or {}
+            if metrics.get("not_ready", 0) == 1 or fit_res.num_examples == 0:
+                skipped_cids.append(cid)
+                LOGGER.info(
+                    "Round %s: client %s skipped (status=%s); excluded from aggregation.",
+                    server_round, cid, metrics.get("status", "unknown"),
+                )
+                # Transition skipped clients back to IDLE in the manager.
+                _cm = self._client_manager
+                if _cm is not None and hasattr(_cm, "mark_not_ready"):
+                    _cm.mark_not_ready(cid)
+            else:
+                active_results.append((client_proxy, fit_res))
+                # Transition participating clients back to READY.
+                _cm = self._client_manager
+                if _cm is not None and hasattr(_cm, "complete_round"):
+                    _cm.complete_round(cid, server_round)
 
-        if len(results) < MIN_CLIENTS:
+        if skipped_cids:
+            log(WARNING, "Round %s: %d client(s) skipped — %s", server_round, len(skipped_cids), skipped_cids)
+
+        if not active_results:
+            log(WARNING, "Round %s produced no usable fit results; keeping previous global model", server_round)
+            self._prepared_clients.pop(server_round, None)
+            return self._current_parameters(), {"round_failed": True, "skipped_clients": len(skipped_cids)}
+
+        if len(active_results) < MIN_CLIENTS:
             log(
                 WARNING,
                 "Round %s below minimum result threshold (%s < %s); keeping previous model",
                 server_round,
-                len(results),
+                len(active_results),
                 MIN_CLIENTS,
             )
             self._prepared_clients.pop(server_round, None)
             return self._current_parameters(), {
                 "round_failed": True,
                 "reason": "below_min_clients",
+                "skipped_clients": len(skipped_cids),
             }
 
         if self.latest_parameters is None:
@@ -257,11 +332,10 @@ class FeatureParityFedAvg(FedAvg):
             self.latest_parameters = parameters_to_ndarrays(self.initial_parameters)
         current_weights = self.latest_parameters
 
-        # Proper weighted FedAvg — average all clients' updates weighted by num_examples.
-        # Previously this incorrectly used only results[0], discarding every other client.
+        # Proper weighted FedAvg — only over clients that actually trained.
         weights_results = [
             (parameters_to_ndarrays(fit_res.parameters), fit_res.num_examples)
-            for _, fit_res in results
+            for _, fit_res in active_results
         ]
         aggregated_parameters = fedavg_aggregate(weights_results)
 
@@ -279,18 +353,19 @@ class FeatureParityFedAvg(FedAvg):
 
         round_hashes = self.round_candidates.pop(server_round, {})
         self._prepared_clients.pop(server_round, None)
-        for client_proxy, _ in results:
+        for client_proxy, _ in active_results:
             client_id = self._get_client_id(client_proxy)
             if client_id in round_hashes:
                 self.last_known_hash[client_id] = round_hashes[client_id]
 
         self.latest_parameters = new_weights
-        metrics = {}
+        metrics: dict[str, Any] = {}
         if self.fit_metrics_aggregation_fn is not None:
             metrics = self.fit_metrics_aggregation_fn(
-                [(fit_res.num_examples, fit_res.metrics) for _, fit_res in results]
+                [(fit_res.num_examples, fit_res.metrics) for _, fit_res in active_results]
             )
-        metrics["participants"] = len(results)
+        metrics["participants"] = len(active_results)
+        metrics["skipped_clients"] = len(skipped_cids)
         metrics["secagg_protected"] = bool(SECAGG_ENABLED)
         metrics["central_dp_enabled"] = bool(CENTRAL_DP_ENABLED)
         metrics["active_session_hashes"] = len(self._session_hashes)
