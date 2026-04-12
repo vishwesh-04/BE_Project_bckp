@@ -120,6 +120,8 @@ class ClientUi(QMainWindow):
 
         self.inference_tab.predict_requested.connect(self.fl_worker.run_prediction)
         self.fl_worker.prediction_result.connect(self.inference_tab.display_prediction_result)
+        self.inference_tab.etl_toggle_requested.connect(self.config_tab.toggle_etl)
+        self.config_tab.etl_toggled.connect(self.inference_tab.set_etl_state)
 
         # Dashboard "Edit Configuration" button → jump to settings tab
         self.dashboard_tab.goto_settings_requested.connect(
@@ -136,6 +138,8 @@ class ClientUi(QMainWindow):
         self.ready_toggle.toggled.connect(self._on_ready_ui_update)
         # Manually trigger initial state to configure colors properly
         self._on_ready_ui_update(self.ready_toggle.isChecked())
+        self.config_tab.set_etl_active(False)
+        self.inference_tab.set_etl_state(False)
 
         # Start the client on launch with saved settings
         self.fl_worker.start_fl_client(

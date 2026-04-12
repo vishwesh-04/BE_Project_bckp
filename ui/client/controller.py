@@ -7,7 +7,7 @@ import grpc
 
 # Import from the client module
 from client.client_common import FLClientRuntime
-from client.inference_engine import predict_from_inputs, PredictionResult
+from client.inference_engine import predict_from_inputs, PredictionResult, get_model_info
 from common.config import CLIENT_ID, get_client_dataset_paths, get_input_dim
 from common.network import NeuralNetworkAlgo
 
@@ -31,6 +31,11 @@ class InferenceWorker(QObject):
     @Slot(dict)
     def run_prediction(self, inputs: Mapping[str, float]):
         try:
+            model_info = get_model_info()
+            if not model_info.get("available", False):
+                raise FileNotFoundError(
+                    "No federated model artifact found yet. Run at least one successful training round first."
+                )
             result: PredictionResult = predict_from_inputs(inputs)
             self.prediction_result.emit(result)
         except Exception as e:

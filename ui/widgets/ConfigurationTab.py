@@ -439,7 +439,9 @@ class ConfigurationTab(QWidget):
 
     @Slot(bool, str)
     def on_fl_client_stopped(self, success: bool, message: str):
-        self._set_ui_state_connected(False)
+        is_pause_event = success and "Paused" in message
+        if not is_pause_event:
+            self._set_ui_state_connected(False)
         if not success:
             self.append_log(f"[ERROR] {message}")
 
@@ -467,9 +469,17 @@ class ConfigurationTab(QWidget):
         self._etl_active = not self._etl_active
         self.etl_toggled.emit(self._etl_active)
 
+    @Slot()
+    def toggle_etl(self):
+        self._on_etl_clicked()
+
     @Slot(bool)
     def set_etl_active(self, active: bool):
         self._etl_active = active
+        if active:
+            self.etl_btn.setText("ETL PIPELINE: ACTIVE")
+        else:
+            self.etl_btn.setText("TOGGLE ETL PIPELINE")
 
     def handle_server_change(self):
         """Handles updating server endpoint and connecting — preserves original logic."""

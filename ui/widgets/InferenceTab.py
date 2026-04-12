@@ -20,6 +20,7 @@ class InferenceTab(QWidget):
 
     # Signal to request a prediction from the FL worker
     predict_requested = Signal(dict)
+    etl_toggle_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -161,7 +162,7 @@ class InferenceTab(QWidget):
         )
         self._etl_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._etl_btn.setFixedHeight(24)
-        self._etl_btn.clicked.connect(self._on_etl_toggle)
+        self._etl_btn.clicked.connect(self.etl_toggle_requested.emit)
 
         h_layout.addWidget(h_title)
         h_layout.addStretch()
@@ -222,10 +223,9 @@ class InferenceTab(QWidget):
         self._table.setCellWidget(row, 3, cell)
         self._table.setRowHeight(row, 48)
 
-    def _on_etl_toggle(self):
-        """Placeholder ETL toggle — just cycles button label."""
-        current = self._etl_btn.text()
-        if "TOGGLE" in current:
+    @Slot(bool)
+    def set_etl_state(self, active: bool):
+        if active:
             self._etl_btn.setText("ETL: ACTIVE ○ STOP")
         else:
             self._etl_btn.setText("TOGGLE ETL STATE")
