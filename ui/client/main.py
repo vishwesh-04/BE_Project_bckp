@@ -1,7 +1,8 @@
 import sys
 import os
+import io
 
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QFontDatabase, QPixmap, QImage
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QStackedWidget, QFrame, QLabel, QCheckBox
@@ -22,20 +23,19 @@ from ui.client.controller import FLWorker
 if os.getenv("DEV_MODE") == "0":
     import resources_rc
 
-
 # ── Tab index constants (must match Sidebar.NAV_ITEMS order) ─────────────────
-TAB_DASHBOARD  = 0
-TAB_INFERENCE  = 1
-TAB_INSIGHTS   = 2
-TAB_HISTORY    = 3
-TAB_SETTINGS   = 4
+TAB_DASHBOARD = 0
+TAB_INFERENCE = 1
+TAB_INSIGHTS = 2
+TAB_HISTORY = 3
+TAB_SETTINGS = 4
 
 TAB_TITLES = {
     TAB_DASHBOARD: "Node Dashboard",
     TAB_INFERENCE: "Live Clinical Prediction",
-    TAB_INSIGHTS:  "SHAP Interpretability Dashboard",
-    TAB_HISTORY:   "Federated Round History",
-    TAB_SETTINGS:  "Node Settings",
+    TAB_INSIGHTS: "SHAP Interpretability Dashboard",
+    TAB_HISTORY: "Federated Round History",
+    TAB_SETTINGS: "Node Settings",
 }
 
 
@@ -72,17 +72,17 @@ class ClientUi(QMainWindow):
         # ── Content stack (5 tabs) ────────────────────────────────────────
         self.content_stack = QStackedWidget()
 
-        self.dashboard_tab  = DashboardTab()
-        self.inference_tab  = InferenceTab()
-        self.insights_tab   = InsightsTab()
-        self.history_tab    = HistoryTab()
-        self.config_tab     = ConfigurationTab()   # Settings / Node Config
+        self.dashboard_tab = DashboardTab()
+        self.inference_tab = InferenceTab()
+        self.insights_tab = InsightsTab()
+        self.history_tab = HistoryTab()
+        self.config_tab = ConfigurationTab()  # Settings / Node Config
 
-        self.content_stack.addWidget(self.dashboard_tab)   # 0
-        self.content_stack.addWidget(self.inference_tab)   # 1
-        self.content_stack.addWidget(self.insights_tab)    # 2
-        self.content_stack.addWidget(self.history_tab)     # 3
-        self.content_stack.addWidget(self.config_tab)      # 4
+        self.content_stack.addWidget(self.dashboard_tab)  # 0
+        self.content_stack.addWidget(self.inference_tab)  # 1
+        self.content_stack.addWidget(self.insights_tab)  # 2
+        self.content_stack.addWidget(self.history_tab)  # 3
+        self.content_stack.addWidget(self.config_tab)  # 4
 
         # Initialize UI elements with settings
         self.config_tab.server_input.setText(self.server_address)
@@ -106,8 +106,8 @@ class ClientUi(QMainWindow):
 
         main_layout.addWidget(self.sidebar)
         main_layout.addWidget(right_container)
-        main_layout.setStretch(0, 0)   # sidebar: fixed natural width
-        main_layout.setStretch(1, 1)   # content: expands
+        main_layout.setStretch(0, 0)  # sidebar: fixed natural width
+        main_layout.setStretch(1, 1)  # content: expands
 
         # ── Wire FL worker → tabs ─────────────────────────────────────────
         self.config_tab.sync_requested.connect(self._on_sync_requested)
@@ -122,8 +122,6 @@ class ClientUi(QMainWindow):
 
         self.inference_tab.predict_requested.connect(self.fl_worker.run_prediction)
         self.fl_worker.prediction_result.connect(self.inference_tab.display_prediction_result)
-        self.inference_tab.etl_toggle_requested.connect(self.config_tab.toggle_etl)
-        self.config_tab.etl_toggled.connect(self.inference_tab.set_etl_state)
 
         # SHAP integration
         self.inference_tab.predict_requested.connect(
@@ -147,14 +145,15 @@ class ClientUi(QMainWindow):
         self.ready_toggle.toggled.connect(self._on_ready_ui_update)
         # Manually trigger initial state to configure colors properly
         self._on_ready_ui_update(self.ready_toggle.isChecked())
+
+        # ETL toggle removed from InferenceTab, so we only set it for config
         self.config_tab.set_etl_active(False)
-        self.inference_tab.set_etl_state(False)
 
         # Start the client on launch with saved settings
         self.fl_worker.start_fl_client(
-            self.server_address, 
-            self.local_epochs, 
-            self.batch_size, 
+            self.server_address,
+            self.local_epochs,
+            self.batch_size,
             self.learning_rate
         )
 
@@ -162,17 +161,42 @@ class ClientUi(QMainWindow):
         # A dummy background data generator.
         # In a real scenario, this would sample from local client dataset.
         import numpy as np
-        # 12 is dummy input dim, will be inferred by SHAP or prediction dynamically.
-        # Assuming we need some background info. We return a small batch of zeros for now.
         return np.zeros((10, 12))
 
     @Slot(object)
     def _on_shap_local_result(self, fig):
         if isinstance(fig, Exception):
             print(f"[SHAP] Error computing local explainer: {fig}")
+            # Pass an empty pixmap and the error string to the UI
+            self.inference_tab.display_shap_result(QPixmap(), f"Error: {str(fig)}")
         else:
             print("[SHAP] Successfully generated local explainer waterfall plot.")
-            # fig.show() can be called to display the plot in a new matplotlib window, or it can be embedded into PyQt later.
+
+            try:
+                # Convert the matplotlib Figure to a QPixmap via memory buffer
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', bbox_inches='tight', dpi=120)
+                buf.seek(0)
+
+                img = QImage.fromData(buf.getvalue())
+                pixmap = QPixmap.fromImage(img)
+
+                # You can customize this explanation logic based on your model's logic
+                explanation = (
+                    "This SHAP waterfall plot illustrates how each clinical feature pushed the "
+                    "model's risk prediction away from the baseline expected value.\n\n"
+                    "• Red bars indicate features increasing the risk score.\n"
+                    "• Blue bars indicate features lowering the risk score."
+                )
+
+                # Push both to the InferenceTab
+                self.inference_tab.display_shap_result(pixmap, explanation)
+
+                # Clean up the figure to free memory
+                fig.clf()
+            except Exception as e:
+                print(f"[SHAP] Error converting figure to pixmap: {e}")
+                self.inference_tab.display_shap_result(QPixmap(), "Error rendering SHAP plot.")
 
     @Slot(object)
     def _on_shap_global_result(self, fig):
@@ -180,7 +204,7 @@ class ClientUi(QMainWindow):
             print(f"[SHAP] Error computing global explainer: {fig}")
         else:
             print("[SHAP] Successfully generated global explainer summary plot.")
-            # fig.show()
+            # Depending on where you want this, you could route it to the InsightsTab
 
     @Slot(str, int, int, float)
     def _on_sync_requested(self, server_address: str, local_epochs: int, batch_size: int, lr: float):
@@ -189,7 +213,7 @@ class ClientUi(QMainWindow):
         self.settings.setValue("local_epochs", local_epochs)
         self.settings.setValue("batch_size", batch_size)
         self.settings.setValue("learning_rate", lr)
-        
+
         self.server_addr_lbl.setText(server_address)
 
         # Pass to worker
@@ -262,7 +286,6 @@ class ClientUi(QMainWindow):
         server_layout.setContentsMargins(0, 0, 0, 0)
         server_layout.setSpacing(2)
         server_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
-
 
         server_lbl_title = QLabel("SERVER ADDR")
         server_lbl_title.setStyleSheet(
@@ -360,7 +383,7 @@ class ClientUi(QMainWindow):
                     self.setStyleSheet(f.read())
                     print(f"[STYLE] Loaded QSS from: {qss_path}")
             except FileNotFoundError:
-                print(f"[STYLE] ❌ Not found: {qss_path}")        # Load Fonts
+                print(f"[STYLE] ❌ Not found: {qss_path}")  # Load Fonts
         font_path = os.path.join(base_dir, "fonts", "Inter-Regular.ttf")
         if os.path.exists(font_path):
             QFontDatabase.addApplicationFont(font_path)

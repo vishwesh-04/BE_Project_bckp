@@ -1,26 +1,22 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame,
-    QLabel, QLineEdit, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QMessageBox, QSizePolicy
+    QLabel, QLineEdit, QPushButton, QMessageBox, QSizePolicy, QTextEdit
 )
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPixmap
 
 from client.inference_engine import PredictionResult
 
 
 class InferenceTab(QWidget):
     """
-    Tab 1 — Live Prediction
-    Matches the HTML prototype 'inference' section:
+    Tab 1 — Live Prediction & SHAP Explanation
       - Left 1/3: Ad-hoc prediction card (3 inputs + Run button + result card)
-      - Right 2/3: Live Pipeline Queue table card (with ETL toggle button)
+      - Right 2/3: SHAP Explanation card (Plot image area + Explanation text area)
     """
 
-    # Signal to request a prediction from the FL worker
+    # Signal to request a prediction from the worker
     predict_requested = Signal(dict)
-    etl_toggle_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -32,11 +28,11 @@ class InferenceTab(QWidget):
         # Left: Ad-hoc prediction card (stretch=1)
         root.addWidget(self._build_prediction_card(), stretch=1)
 
-        # Right: Pipeline queue table card (stretch=2)
-        root.addWidget(self._build_queue_card(), stretch=2)
+        # Right: SHAP Explanation card (stretch=2)
+        root.addWidget(self._build_shap_card(), stretch=2)
 
     # -------------------------------------------------------------------- #
-    #  Left column — Ad-hoc Prediction                                      #
+    #  Left column — Ad-hoc Prediction                                     #
     # -------------------------------------------------------------------- #
     def _build_prediction_card(self) -> QFrame:
         card = QFrame()
@@ -60,8 +56,8 @@ class InferenceTab(QWidget):
         self._inputs = {}
         fields = [
             ("glucose", "Serum Glucose", "120"),
-            ("age",     "Patient Age",   "45"),
-            ("bmi",     "Body Mass Index", "24.2"),
+            ("age", "Patient Age", "45"),
+            ("bmi", "Body Mass Index", "24.2"),
         ]
         for key, label_text, placeholder in fields:
             lbl = QLabel(label_text.upper())
@@ -128,9 +124,9 @@ class InferenceTab(QWidget):
         return card
 
     # -------------------------------------------------------------------- #
-    #  Right column — Live Pipeline Queue                                    #
+    #  Right column — SHAP Explanations                                    #
     # -------------------------------------------------------------------- #
-    def _build_queue_card(self) -> QFrame:
+    def _build_shap_card(self) -> QFrame:
         card = QFrame()
         card.setObjectName("GlassCard")
         card.setProperty("class", "GlassCard")
@@ -148,97 +144,55 @@ class InferenceTab(QWidget):
         h_layout = QHBoxLayout(header)
         h_layout.setContentsMargins(16, 12, 16, 12)
 
-        h_title = QLabel("LIVE PIPELINE QUEUE")
+        h_title = QLabel("MODEL EXPLAINABILITY (SHAP)")
         h_title.setStyleSheet(
             "color: #64748b; font-size: 10px; font-weight: 800; "
             "letter-spacing: 1px; background: transparent; border: none;"
         )
-
-        self._etl_btn = QPushButton("TOGGLE ETL STATE")
-        self._etl_btn.setStyleSheet(
-            "font-size: 9px; font-weight: 800; color: #0d9488; "
-            "border: 1px solid #99f6e4; background: transparent; "
-            "border-radius: 4px; padding: 3px 8px; letter-spacing: 0.5px;"
-        )
-        self._etl_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._etl_btn.setFixedHeight(24)
-        self._etl_btn.clicked.connect(self.etl_toggle_requested.emit)
-
         h_layout.addWidget(h_title)
         h_layout.addStretch()
-        h_layout.addWidget(self._etl_btn)
         layout.addWidget(header)
 
-        # Table
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(
-            ["RECORD UID", "PRIMARY METRIC", "LOCAL CONFIDENCE", "DECISION"]
+        # Content area for SHAP
+        content_frame = QFrame()
+        content_layout = QVBoxLayout(content_frame)
+        content_layout.setContentsMargins(20, 20, 20, 20)
+        content_layout.setSpacing(15)
+
+        # 1. SHAP Plot Placeholder
+        self._shap_plot_lbl = QLabel("Awaiting prediction to generate SHAP plot...")
+        self._shap_plot_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._shap_plot_lbl.setStyleSheet(
+            "background: #f1f5f9; color: #94a3b8; font-size: 12px; "
+            "border: 1px dashed #cbd5e1; border-radius: 8px;"
         )
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.verticalHeader().setVisible(False)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setShowGrid(False)
-        self._table.setAlternatingRowColors(True)
-        self._table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._table.setStyleSheet("QTableWidget::item { border: none; }")
+        self._shap_plot_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Assuming the plot will take up most of the vertical space
+        content_layout.addWidget(self._shap_plot_lbl, stretch=3)
 
-        # Pre-populate with prototype mock data
-        self._add_queue_row("#ID-992", "Glucose: 98",  "99.8%", "LOW RISK",    "#059669", "#dcfce7")
-        self._add_queue_row("#ID-993", "Glucose: 165", "88.4%", "ALERT RISK",  "#dc2626", "#fee2e2")
+        # 2. SHAP Text Explanation
+        self._shap_explanation_text = QTextEdit()
+        self._shap_explanation_text.setReadOnly(True)
+        self._shap_explanation_text.setPlaceholderText("SHAP feature contribution explanation will appear here.")
+        self._shap_explanation_text.setStyleSheet(
+            "background: transparent; color: #334155; font-size: 12px; "
+            "border: none;"
+        )
+        # Give the text area a bit less stretch than the plot
+        content_layout.addWidget(self._shap_explanation_text, stretch=1)
 
-        layout.addWidget(self._table)
+        layout.addWidget(content_frame)
         return card
 
     # -------------------------------------------------------------------- #
-    #  Helpers                                                               #
-    # -------------------------------------------------------------------- #
-    def _add_queue_row(self, uid: str, metric: str, confidence: str,
-                       decision: str, text_color: str, bg_color: str):
-        row = self._table.rowCount()
-        self._table.insertRow(row)
-
-        mono_font = QFont("JetBrains Mono, Consolas, monospace")
-
-        uid_item = QTableWidgetItem(uid)
-        uid_item.setFont(mono_font)
-        self._table.setItem(row, 0, uid_item)
-        self._table.setItem(row, 1, QTableWidgetItem(metric))
-        self._table.setItem(row, 2, QTableWidgetItem(confidence))
-
-        badge_widget = QLabel(decision)
-        badge_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge_widget.setStyleSheet(
-            f"background-color: {bg_color}; color: {text_color}; "
-            "border: none; border-radius: 4px; padding: 3px 8px; "
-            "font-size: 9px; font-weight: 800;"
-        )
-        badge_widget.setFixedHeight(22)
-
-        cell = QWidget()
-        cell_lay = QHBoxLayout(cell)
-        cell_lay.setContentsMargins(8, 4, 8, 4)
-        cell_lay.addWidget(badge_widget)
-        cell_lay.addStretch()
-        self._table.setCellWidget(row, 3, cell)
-        self._table.setRowHeight(row, 48)
-
-    @Slot(bool)
-    def set_etl_state(self, active: bool):
-        if active:
-            self._etl_btn.setText("ETL: ACTIVE ○ STOP")
-        else:
-            self._etl_btn.setText("TOGGLE ETL STATE")
-
-    # -------------------------------------------------------------------- #
-    #  Prediction                                                            #
+    #  Prediction & UI Updates                                             #
     # -------------------------------------------------------------------- #
     def _emit_predict(self):
         try:
             val_map = {
                 "glucose": float(self._inputs["glucose"].text() or 0.0),
-                "age":     float(self._inputs["age"].text()     or 0.0),
-                "bmi":     float(self._inputs["bmi"].text()     or 0.0),
+                "age": float(self._inputs["age"].text() or 0.0),
+                "bmi": float(self._inputs["bmi"].text() or 0.0),
             }
         except ValueError:
             QMessageBox.warning(self, "Invalid Input", "Please enter valid numbers.")
@@ -246,15 +200,22 @@ class InferenceTab(QWidget):
 
         self._run_btn.setText("PREDICTING…")
         self._run_btn.setEnabled(False)
+
+        # Reset SHAP UI while predicting
+        self._shap_plot_lbl.setText("Generating SHAP plot...")
+        self._shap_plot_lbl.setPixmap(QPixmap())
+        self._shap_explanation_text.clear()
+
         self.predict_requested.emit(val_map)
 
     @Slot(object)
     def display_prediction_result(self, result):
-        self._run_btn.setText("RUN CACHED MODEL")
+        self._run_btn.setText("PREDICT")
         self._run_btn.setEnabled(True)
 
         if isinstance(result, Exception):
             QMessageBox.critical(self, "Prediction Error", str(result))
+            self._shap_plot_lbl.setText("Error generating SHAP explanation.")
             return
 
         res: PredictionResult = result
@@ -293,11 +254,21 @@ class InferenceTab(QWidget):
                 "font-size: 11px; font-weight: 800; color: #0f766e; letter-spacing: 0.5px; border: none;"
             )
 
-        # # Also add to queue table
-        # decision = "ALERT RISK" if is_high else "LOW RISK"
-        # text_color = "#dc2626" if is_high else "#059669"
-        # bg_color   = "#fee2e2" if is_high else "#dcfce7"
-        # self._add_queue_row(
-        #     "#MANUAL", f"Glucose: {int(self._inputs['glucose'].text() or 0)}",
-        #     f"{res.probability:.1%}", decision, text_color, bg_color
-        # )
+    @Slot(QPixmap, str)
+    def display_shap_result(self, pixmap: QPixmap, explanation: str):
+        """
+        Call this method from your main window/controller once the SHAP
+        plot and explanation text are ready.
+        """
+        if not pixmap.isNull():
+            # Scale the pixmap to fit the label while keeping aspect ratio
+            scaled_pixmap = pixmap.scaled(
+                self._shap_plot_lbl.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self._shap_plot_lbl.setPixmap(scaled_pixmap)
+        else:
+            self._shap_plot_lbl.setText("Failed to load SHAP plot.")
+
+        self._shap_explanation_text.setText(explanation)

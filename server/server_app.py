@@ -5,6 +5,7 @@ from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import LegacyContext, ServerApp, ServerConfig
 from flwr.server.workflow import SecAggPlusWorkflow
 
+
 from common.config import (
     ARTIFACT_DIR,
     TRAINING_LOG_PATH,

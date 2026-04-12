@@ -10,13 +10,12 @@ from flwr.common import ConfigsRecord, Context
 from flwr.common.logger import log
 from flwr.server import LegacyContext
 from flwr.server.compat.app_utils import start_update_client_manager_thread
-from flwr.server.driver import Driver
 from flwr.server.workflow.constant import MAIN_CONFIGS_RECORD, Key as WorkflowKey
 from flwr.server.workflow.default_workflows import (
     default_centralized_evaluation_workflow,
     default_evaluate_workflow,
     default_fit_workflow,
-    default_init_params_workflow,
+    default_init_params_workflow, DefaultWorkflow,
 )
 
 from common.config import QUORUM_WAIT_TIMEOUT, SESSION_COOLDOWN_SECONDS, SESSION_STALL_TIMEOUT_SECONDS
@@ -40,8 +39,10 @@ class EventDrivenWorkflow:
         on_round_end: Optional[Callable[[int, bool], None]] = None,
         on_session_complete: Optional[Callable[[int, int], None]] = None,
     ) -> None:
-        self.fit_workflow = fit_workflow or default_fit_workflow
-        self.evaluate_workflow = evaluate_workflow or default_evaluate_workflow
+
+        self.base_workflow = DefaultWorkflow()
+        self.fit_workflow = fit_workflow or self.base_workflow.fit
+        self.evaluate_workflow = evaluate_workflow or self.base_workflow.evaluate
         self.idle_sleep = idle_sleep
         self.state_store = get_state_store()
         # UI callbacks

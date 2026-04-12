@@ -1,450 +1,185 @@
-import logging
+import os
 import traceback
-from typing import Any, Mapping, Optional
-
 from PySide6.QtCore import QObject, Signal, Slot, QThread
-import grpc
+import flwr as fl
 
-# Import from the client module
-from client.client_common import FLClientRuntime
-from client.inference_engine import predict_from_inputs, PredictionResult, get_model_info
-from client.shap_engine import get_global_explainer, get_local_explainer
-from common.config import CLIENT_ID, get_client_dataset_paths, get_input_dim
+# ── Dynamic imports based on your client logic ──
+from common.config import get_client_dataset_paths, get_input_dim
 from common.network import NeuralNetworkAlgo
-
-
-class QtLogHandler(logging.Handler):
-    def __init__(self, emit_func):
-        super().__init__()
-        self.emit_func = emit_func
-
-    def emit(self, record):
-        msg = self.format(record)
-        self.emit_func(msg)
-
-LOGGER = logging.getLogger(__name__)
-
-
-class InferenceWorker(QObject):
-    """Worker running on a background QThread to perform Inference tasks."""
-    prediction_result = Signal(object)
-
-    @Slot(dict)
-    def run_prediction(self, inputs: Mapping[str, float]):
-        try:
-            model_info = get_model_info()
-            if not model_info.get("available", False):
-                raise FileNotFoundError(
-                    "No federated model artifact found yet. Run at least one successful training round first."
-                )
-            result: PredictionResult = predict_from_inputs(inputs)
-            self.prediction_result.emit(result)
-        except Exception as e:
-            err_msg = f"Inference engine failed: {str(e)}"
-            LOGGER.error(err_msg)
-            self.prediction_result.emit(e)
-
-
-class ShapWorker(QObject):
-    """Worker running on a background QThread to perform SHAP tasks."""
-    shap_global_result = Signal(object)
-    shap_local_result = Signal(object)
-
-    @Slot(object)
-    def run_global_shap(self, background_data: Any):
-        try:
-            fig = get_global_explainer(background_data)
-            self.shap_global_result.emit(fig)
-            print("Global SHAP Explainer generated successfully.")
-        except Exception as e:
-            err_msg = f"Global SHAP engine failed: {str(e)}"
-            LOGGER.error(err_msg)
-            self.shap_global_result.emit(e)
-
-    @Slot(object, object)
-    def run_local_shap(self, background_data: Any, instance_data: Any):
-        try:
-            fig = get_local_explainer(background_data, instance_data)
-            self.shap_local_result.emit(fig)
-            print("Local SHAP Explainer generated successfully.")
-        except Exception as e:
-            err_msg = f"Local SHAP engine failed: {str(e)}"
-            LOGGER.error(err_msg)
-            self.shap_local_result.emit(e)
+from client.client_common import FLClientRuntime
+from client.inference_engine import predict_from_inputs, PredictionResult
+from client.shap_engine import get_local_explainer, get_global_explainer
 
 
 class FLSystemWorker(QObject):
     """
-    Worker running on a background QThread to perform Federated Learning execution.
-
-    Reconnection handling:
-    Each call to start_fl_client() issues a fresh gRPC connection.
-    If the client was previously running (even on the same URL), the old
-    state is discarded and a new session is established.  This ensures a
-    clean slate after service restarts or network interruptions without
-    requiring an explicit disconnect step.
+    Background worker that executes the blocking Flower network connection.
+    Prevents PySide6 Main Thread (UI) from freezing.
     """
-    training_started = Signal(int)
-    training_ended = Signal(bool)
-    evaluation_completed = Signal(float, float)
-    fl_client_started = Signal()
-    fl_client_stopped = Signal(bool, str)  # success, message
-    mute_rejected = Signal()              # emitted when mute() fails (client is mid-training)
-    log_message = Signal(str)
+    finished = Signal()
+    log_signal = Signal(str)
+    started = Signal()
+    stopped = Signal()
 
-    def __init__(self):
+    # Pass-through signals for FLClientRuntime callbacks
+    training_started_sig = Signal(int)
+    training_ended_sig = Signal(bool)
+    evaluation_completed_sig = Signal(dict)
+
+    def __init__(self, server_address: str, epochs: int, batch_size: int, lr: float):
         super().__init__()
-        self.train_path, self.test_path = get_client_dataset_paths(CLIENT_ID)
-        self.input_dim = get_input_dim()
-        self.client_id = CLIENT_ID
+        self.server_address = server_address
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.lr = lr
 
-        self.fl_client: Optional[FLClientRuntime] = None
+        # Resolve client ID and paths natively
+        client_id = os.getenv("CLIENT_ID", "1")
+        train_path, test_path = get_client_dataset_paths(client_id)
 
-        # Setup logging redirection for our worker thread
-        handler = QtLogHandler(self._emit_log)
-        handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
-        logging.getLogger("flwr").addHandler(handler)
-        logging.getLogger("client").addHandler(handler)
-        LOGGER.addHandler(handler)
+        if not train_path or not test_path:
+            self.log_signal.emit(f"[WARNING] Data paths for Client {client_id} not found!")
 
-    def _emit_log(self, msg: str):
-        self.log_message.emit(msg)
+        algo = NeuralNetworkAlgo(input_dim=get_input_dim())
 
-    def _create_client(self, local_epochs: int = 3, batch_size: int = 32, lr: float = 0.001) -> FLClientRuntime:
-        """Helper to create FLClientRuntime with GUI signals bound."""
-        return FLClientRuntime(
-            client_id=str(self.client_id),
-            train_path=str(self.train_path),
-            test_path=str(self.test_path),
-            algo=NeuralNetworkAlgo(input_dim=self.input_dim),
-            use_personalization=False,
-            local_epochs=local_epochs,
-            batch_size=batch_size,
-            learning_rate=lr,
-            on_training_start=self._on_training_start_callback,
-            on_training_end=self._on_training_end_callback,
-            on_evaluate=self._on_evaluate_callback,
-        )
-
-    def _on_training_start_callback(self, round_num: int):
-        self.training_started.emit(round_num)
-
-    def _on_training_end_callback(self, success: bool):
-        self.training_ended.emit(success)
-
-    def _on_evaluate_callback(self, loss: float, acc: float):
-        self.evaluation_completed.emit(loss, acc)
-
-    @Slot(str, int, int, float)
-    def start_fl_client(self, server_address: str, local_epochs: int, batch_size: int, lr: float):
-        """
-        Starts the Flower client, always issuing a fresh gRPC connection.
-
-        A new FLClientRuntime is created on every call so that:
-          1. Reconnections after a service restart get a clean state.
-          2. Updated hyperparameters (epochs, batch-size, lr) are applied.
-          3. Any mute state from a previous session is cleared.
-
-        The previous client is cleanly unmuted first so its _busy_lock is
-        released before we discard it (avoids holding a lock on a zombie obj).
-        """
-        # Tear down any previous client cleanly so its lock is released.
-        if self.fl_client is not None:
-            try:
-                self.fl_client.unmute()  # ensure no lingering mute flag
-            except Exception:
-                pass
-            self.fl_client = None
-
-        LOGGER.info(
-            "Connecting FL Client to %s | EPOCHS=%d BFS=%d LR=%.4f",
-            server_address, local_epochs, batch_size, lr,
-        )
-        self.fl_client = self._create_client(local_epochs, batch_size, lr)
-        self.fl_client_started.emit()
-
-        import signal as _signal
-        original_signal = _signal.signal
-        try:
-            # Mock signal handler to prevent ValueError from main-thread requirement
-            _signal.signal = lambda *a, **kw: None
-
-            # ------------------------------------------------------------------
-            # Use _start_client_internal with a load_client_app_fn so the
-            # real ClientApp (with secaggplus_mod) is used for every message.
-            # Flower's internal _start_client_internal wraps everything in the
-            # lazy-loaded ClientApp; our factory below captures fl_client so
-            # the per-invocation FLClientRuntime instance is used.
-            # ------------------------------------------------------------------
-            from flwr.client.app import _start_client_internal
-            from flwr.client import ClientApp
-            from flwr.client.mod import secaggplus_mod
-            from common.config import SECAGG_ENABLED
-
-            fl_client_ref = self.fl_client  # local snapshot for the closure
-
-            def _load_client_app(_fab_id: str, _fab_version: str) -> ClientApp:
-                """
-                Factory called by Flower each time it needs a ClientApp.
-                We return the same app instance but ensure the client_fn
-                closure always routes to the current fl_client instance.
-                """
-                def _client_fn(context):  # noqa: ANN001
-                    return fl_client_ref.to_client()
-
-                mods = [secaggplus_mod] if SECAGG_ENABLED else []
-                return ClientApp(client_fn=_client_fn, mods=mods)
-
-            if self.fl_client is not None:
-                try:
-                    # In newer flwr versions, start_client transport defaults to 'grpc-bidi'
-                    # which is compatible with older versions of start_server
-                    _start_client_internal(
-                        server_address=server_address,
-                        node_config={},
-                        load_client_app_fn=_load_client_app,
-                        insecure=True,
-                        transport="grpc-rere",
-                        # Allow unlimited reconnect retries so the client survives
-                        # transient server restarts without terminating the UI.
-                        max_retries=None,
-                        max_wait_time=None,
-                    )
-                    self.fl_client_stopped.emit(True, "Disconnected normally.")
-                except Exception as e:
-                    # Flower often raises a custom Exception or MultiThreadedRendezvous inside start_client
-                    err_str = str(e)
-                    
-                    if "StatusCode.UNAVAILABLE" in err_str:
-                        err_msg = f"Failed to connect to FL Server at {server_address}. The server might be offline or starting up."
-                        LOGGER.error(err_msg)
-                        self.fl_client_stopped.emit(False, "Server Offline")
-                    elif "StatusCode.UNIMPLEMENTED" in err_str or "Method not found" in err_str:
-                        # FALLBACK to grpc-bidi if Server version mismatch occurs
-                        err_msg = f"Version mismatch or incorrect endpoint on FL Server at {server_address}. Method not found. (Using grpc-bidi transport)"
-                        LOGGER.error(err_msg)
-                        self.fl_client_stopped.emit(False, "Server Version/Endpoint Mismatch")
-                    else:
-                        raise e # Not a known grpc connection error, escalate
-        except Exception as e:
-             err_msg = f"FL client stopped: {str(e)}\n{traceback.format_exc()}"
-             LOGGER.error(err_msg)
-             self.fl_client_stopped.emit(False, str(e))
-        finally:
-            _signal.signal = original_signal
-
-    @Slot()
-    def stop_fl_client(self):
-        """
-        Mute the client — it will skip future rounds but remain connected.
-
-        mute() is thread-safe and will refuse to mute while a training call
-        is in progress (returns False). In that case we emit mute_rejected so
-        the UI can snap the toggle back to its previous (Ready) state instead
-        of silently leaving it unchecked while the client is still READY.
-        """
-        if self.fl_client is None:
-            LOGGER.warning("stop_fl_client called but no active FL client.")
-            return
-
-        success = self.fl_client.mute()
-        if success:
-            LOGGER.info("Client set to Not Ready (muted). Future rounds will be skipped.")
-            self.fl_client_stopped.emit(True, "Paused — skipping rounds.")
-        else:
-            # Mid-training: mute rejected — tell the UI to snap the toggle back.
-            LOGGER.warning(
-                "Mute rejected: client is currently in a training round. "
-                "Wait for the round to complete before muting."
+        # Instantiate your custom Flower client with UI hooks attached
+        self.fl_client = FLClientRuntime(
+            client_id=client_id,
+            train_path=train_path,
+            test_path=test_path,
+            algo=algo,
+            use_personalization=True,
+            local_epochs=self.epochs,
+            batch_size=self.batch_size,
+            learning_rate=self.lr,
+            on_training_start=lambda rnd: self.training_started_sig.emit(rnd),
+            on_training_end=lambda success: self.training_ended_sig.emit(success),
+            on_evaluate=lambda loss, acc: self.evaluation_completed_sig.emit(
+                {"loss": loss, "accuracy": acc}
             )
-            self.mute_rejected.emit()
+        )
 
     @Slot()
-    def resume_fl_client(self):
-        """
-        Unmute the client — it will resume participation in future rounds.
-        Always safe to call (even mid-training: unmute is instant & lock-free).
-        """
-        if self.fl_client is None:
-            LOGGER.warning("resume_fl_client called but no active FL client.")
-            return
-        self.fl_client.unmute()
-        LOGGER.info("Client resumed (unmuted). Will participate in the next round.")
+    def run(self):
+        self.log_signal.emit(f"[SYSTEM] Connecting to SuperLink at {self.server_address}...")
+        self.started.emit()
+        try:
+            # Flower 1.28.0 Wrapper
+            client_wrapper = self.fl_client.to_client()
 
-    def get_client_status(self) -> str:
-        """Returns the current ClientReadyState as a string (useful for UI status bars)."""
-        if self.fl_client is None:
-            return "disconnected"
-        _, state = self.fl_client._ready_state()
-        return state.value
+            # Blocking call
+            fl.client.start_client(
+                server_address=self.server_address,
+                client=client_wrapper,
+                insecure=True
+            )
+            self.log_signal.emit("[SYSTEM] FL Client disconnected gracefully.")
+        except Exception as e:
+            self.log_signal.emit(f"[ERROR] FL connection error: {e}")
+            self.log_signal.emit(traceback.format_exc())
+        finally:
+            self.stopped.emit()
+            self.finished.emit()
 
 
 class FLWorker(QObject):
     """
-    Main controller to manage Inference, SHAP, and FL System workers.
-    Each sub-worker runs in its own dedicated QThread.
-    Provides backward-compatible interface with the original FLWorker.
+    Primary Controller: Handles signals to and from the UI, orchestrating
+    Federated Learning, Inference, and Explainability tasks.
     """
-    # Signals for Inference
-    prediction_result = Signal(object)
-
-    # Signals for SHAP
-    shap_global_result = Signal(object)
-    shap_local_result = Signal(object)
-
-    # Signals for FL Training
+    # ── UI Signals (Must match connections in main.py) ──
     training_started = Signal(int)
-    training_ended = Signal(bool)
-    evaluation_completed = Signal(float, float)
+    training_ended = Signal()
+    evaluation_completed = Signal(dict)
     fl_client_started = Signal()
-    fl_client_stopped = Signal(bool, str)  # success, message
-    mute_rejected = Signal()              # emitted when mute() is rejected (mid-training)
-
-    # Generic logging channel
+    fl_client_stopped = Signal()
+    mute_rejected = Signal()
     log_message = Signal(str)
 
-    # Internal routing signals (cross thread boundaries)
-    _run_prediction_signal = Signal(dict)
-    _run_shap_global_signal = Signal(object)
-    _run_shap_local_signal = Signal(object, object)
-    _start_fl_signal = Signal(str, int, int, float)
-    _stop_fl_signal = Signal()
-    _resume_fl_signal = Signal()
+    prediction_result = Signal(object)
+    shap_local_result = Signal(object)
+    shap_global_result = Signal(object)
 
     def __init__(self):
         super().__init__()
+        self.fl_thread = None
+        self.fl_system_worker = None
 
-        self.batch_size = 32
-        self.learning_rate = 0.001
-
-        # 1. Initialize Threads
-        self.inference_thread = QThread()
-        self.shap_thread = QThread()
-        self.fl_thread = QThread()
-
-        # 2. Initialize Workers
-        self.inference_worker = InferenceWorker()
-        self.shap_worker = ShapWorker()
-        self.fl_system_worker = FLSystemWorker()
-
-        # 3. Move Workers to their respective threads
-        self.inference_worker.moveToThread(self.inference_thread)
-        self.shap_worker.moveToThread(self.shap_thread)
-        self.fl_system_worker.moveToThread(self.fl_thread)
-
-        # 4. Connect routing signals (Controller -> Worker)
-        self._run_prediction_signal.connect(self.inference_worker.run_prediction)
-        self._run_shap_global_signal.connect(self.shap_worker.run_global_shap)
-        self._run_shap_local_signal.connect(self.shap_worker.run_local_shap)
-        self._start_fl_signal.connect(self.fl_system_worker.start_fl_client)
-        # NOTE: _stop_fl_signal and _resume_fl_signal are intentionally NOT
-        # connected to FLSystemWorker slots here. The fl_thread is permanently
-        # blocked inside start_client() (gRPC loop), so its Qt event
-        # loop never processes queued signals. mute()/unmute() are
-        # threading.Event operations safe to call directly from any thread.
-
-        # 5. Connect worker signals back out (Worker -> Controller -> UI)
-        self.inference_worker.prediction_result.connect(self.prediction_result)
-        self.shap_worker.shap_global_result.connect(self.shap_global_result)
-        self.shap_worker.shap_local_result.connect(self.shap_local_result)
-
-        self.fl_system_worker.training_started.connect(self.training_started)
-        self.fl_system_worker.training_ended.connect(self.training_ended)
-        self.fl_system_worker.evaluation_completed.connect(self.evaluation_completed)
-        self.fl_system_worker.fl_client_started.connect(self.fl_client_started)
-        self.fl_system_worker.fl_client_stopped.connect(self.fl_client_stopped)
-        self.fl_system_worker.mute_rejected.connect(self.mute_rejected)
-        self.fl_system_worker.log_message.connect(self.log_message)
-
-        # 6. Start Threads
-        self.inference_thread.start()
-        self.shap_thread.start()
-        self.fl_thread.start()
-
+    # ──────────────────────────────────────────────────────────────────────
+    #  Federated Learning Controls
+    # ──────────────────────────────────────────────────────────────────────
     @Slot(str, int, int, float)
     def start_fl_client(self, server_address: str, local_epochs: int, batch_size: int, lr: float):
-        """Routes start FL client command to FL system worker."""
-        self._start_fl_signal.emit(server_address, local_epochs, batch_size, lr)
+        self.stop_fl_client()  # Prevent overlapping threads
 
-    @Slot()
-    def stop_fl_client(self):
-        """
-        Mute the client — it will skip rounds but stay connected.
+        self.log_message.emit("[SYSTEM] Initializing FL node thread...")
 
-        CRITICAL: We call fl_system_worker.fl_client.mute() DIRECTLY here,
-        bypassing the Qt signal/slot queue.  The fl_thread is permanently
-        blocked inside start_client() (the Flower gRPC loop), so
-        its event loop never processes queued signals — emitting _stop_fl_signal
-        would silently do nothing and the client would keep replying ready=True.
+        self.fl_thread = QThread()
+        self.fl_system_worker = FLSystemWorker(server_address, local_epochs, batch_size, lr)
+        self.fl_system_worker.moveToThread(self.fl_thread)
 
-        mute() only touches a threading.Event and RLock, so it is explicitly
-        designed to be called from any thread at any time.
-        """
-        worker = self.fl_system_worker
-        if worker.fl_client is None:
-            LOGGER.warning("stop_fl_client: no active FL client to mute.")
-            return
+        # Thread lifecycle signals
+        self.fl_thread.started.connect(self.fl_system_worker.run)
+        self.fl_system_worker.finished.connect(self.fl_thread.quit)
+        self.fl_system_worker.finished.connect(self.fl_system_worker.deleteLater)
+        self.fl_thread.finished.connect(self.fl_thread.deleteLater)
 
-        success = worker.fl_client.mute()
-        if success:
-            LOGGER.info("[UI] Client muted directly — will skip future rounds.")
-            # Emit fl_client_stopped so the config tab card updates.
-            # Use a Qt-safe emit from this (main) thread — the signal is
-            # connected to the main-thread config tab widget.
-            worker.fl_client_stopped.emit(True, "Paused — skipping rounds.")
-        else:
-            # Mid-training rejection — signal the UI to snap the checkbox back.
-            LOGGER.warning(
-                "[UI] Mute rejected: client is in a training round. "
-                "Try again after the round completes."
-            )
-            worker.mute_rejected.emit()
+        # Map worker signals to UI signals
+        self.fl_system_worker.log_signal.connect(self.log_message.emit)
+        self.fl_system_worker.started.connect(self.fl_client_started.emit)
+        self.fl_system_worker.stopped.connect(self.fl_client_stopped.emit)
+
+        self.fl_system_worker.training_started_sig.connect(self.training_started.emit)
+        self.fl_system_worker.training_ended_sig.connect(lambda _: self.training_ended.emit())
+        self.fl_system_worker.evaluation_completed_sig.connect(self.evaluation_completed.emit)
+
+        self.fl_thread.start()
 
     @Slot()
     def resume_fl_client(self):
-        """
-        Unmute the client — it will participate in rounds again.
+        if self.fl_system_worker and hasattr(self.fl_system_worker.fl_client, 'unmute'):
+            self.fl_system_worker.fl_client.unmute()
+            self.log_message.emit("[SYSTEM] Node resumed active participation.")
 
-        Same reasoning as stop_fl_client: we call unmute() directly on the
-        FLClientRuntime rather than routing through the blocked fl_thread's
-        event queue.  unmute() is always safe and lock-free.
-        """
-        worker = self.fl_system_worker
-        if worker.fl_client is None:
-            LOGGER.warning("resume_fl_client: no active FL client to unmute.")
-            return
-        worker.fl_client.unmute()
-        LOGGER.info("[UI] Client unmuted directly — will participate in next round.")
+    @Slot()
+    def stop_fl_client(self):
+        if self.fl_thread and self.fl_thread.isRunning():
+            if self.fl_system_worker and hasattr(self.fl_system_worker.fl_client, 'mute'):
+                # Try to mute. If it returns False, the client is currently training!
+                success = self.fl_system_worker.fl_client.mute()
+                if success:
+                    self.log_message.emit("[SYSTEM] Node paused participation (muted).")
+                else:
+                    self.mute_rejected.emit()
 
-    @Slot(dict)
-    def run_prediction(self, inputs: Mapping[str, float]):
-        """Routes prediction command to inference worker."""
-        self._run_prediction_signal.emit(inputs)
-
-    @Slot(object)
-    def run_shap_global(self, background_data: Any):
-        """Routes Global SHAP command to shap worker."""
-        self._run_shap_global_signal.emit(background_data)
-        
-    @Slot(object, object)
-    def run_shap_local(self, background_data: Any, instance_data: Any):
-        """Routes Local SHAP command to shap worker."""
-        self._run_shap_local_signal.emit(background_data, instance_data)
-
+    @Slot()
     def shutdown(self):
-        """Gracefully stop background threads, force killing FL thread if still blocked."""
-        self.inference_thread.quit()
-        self.shap_thread.quit()
-
-        if self.fl_thread.isRunning():
-            self.fl_thread.terminate()
+        """Hard exit for application closing."""
+        if self.fl_thread and self.fl_thread.isRunning():
+            self.fl_thread.quit()
             self.fl_thread.wait()
 
-        self.inference_thread.wait()
-        self.shap_thread.wait()
-
-    def __del__(self):
+    # ──────────────────────────────────────────────────────────────────────
+    #  Inference & Explainability Controls
+    # ──────────────────────────────────────────────────────────────────────
+    @Slot(dict)
+    def run_prediction(self, val_map: dict):
         try:
-            self.shutdown()
-        except Exception:
-            pass  # Qt C++ objects may already be deleted by GC time
+            self.log_message.emit(f"[INFERENCE] Running ad-hoc prediction...")
+            # Route to your inference_engine.py function
+            result: PredictionResult = predict_from_inputs(val_map)
+            self.prediction_result.emit(result)
+        except Exception as e:
+            self.log_message.emit(f"[ERROR] Inference failed: {str(e)}")
+            self.prediction_result.emit(e)
+
+    @Slot(object, dict)
+    def run_shap_local(self, background_data, val_map: dict):
+        try:
+            self.log_message.emit("[SHAP] Generating model explanation waterfall...")
+            # Route to your shap_engine.py function
+            fig = get_local_explainer(background_data, val_map)
+            self.shap_local_result.emit(fig)
+        except Exception as e:
+            self.log_message.emit(f"[ERROR] SHAP calculation failed: {str(e)}")
+            self.shap_local_result.emit(e)
