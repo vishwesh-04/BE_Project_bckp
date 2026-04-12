@@ -423,9 +423,9 @@ class ConfigurationTab(QWidget):
         html = f'<div style="color: {color}; margin-bottom: 4px;">{msg_html}</div>'
         self.logs_dialog.append_log(html)
 
-    @Slot()
-    def on_training_started(self):
-        self.set_btn.setText("TRAINING…")
+    @Slot(int)
+    def on_training_started(self, round_num: int = 0):
+        self.set_btn.setText(f"TRAINING ROUND {round_num}…")
         self.set_btn.setEnabled(False)
 
     @Slot(bool)

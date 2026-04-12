@@ -1,209 +1,98 @@
-# Planner: Federated Learning Client–Server Verification and UI Integration
+Planner: Federated Learning Client–Server Verification and UI Integration
 
-## Global Instruction (Apply to ALL Steps)
+Project Overview
 
-You are a careful systems engineer working on an existing federated learning system using Flower (FLWR), SecAgg, Differential Privacy, and a PySide6 UI.
+This planner guides an AI agent through the verification, correction, and enhancement of a Federated Learning (FL) system utilizing Flower (FLWR), SecAgg, Differential Privacy, and a PySide6 UI.
 
-* Do NOT break existing functionality.
-* Do NOT refactor working code unless absolutely necessary.
-* Prefer verification over modification.
-* Make small, incremental, testable changes.
-* Preserve all existing interfaces and behavior.
-* Ensure UI remains responsive (no blocking main thread).
-* Ensure all changes are reversible and well-logged.
+Global Instructions (System Engineer Protocol)
 
----
+Do NOT break existing functionality.
 
-## Phase 1: System Verification
+Do NOT refactor working code unless absolutely necessary for the fix.
 
-### Instruction
+Small, incremental, testable changes are mandatory.
 
-You are responsible for verifying that the current system behaves exactly as described before making any changes.
+Preserve interfaces: Maintain existing API contracts and class structures.
 
-### Tasks
+Thread Safety: Ensure the UI remains responsive; never block the main thread with network or training logic.
 
-* Verify server runs continuously and accepts client connections.
+Logging: Use verbose logging to trace state transitions and errors.
 
-* Verify client readiness checks before training.
+Execution Environment
 
-* Verify `min_clients` and `max_clients` logic is enforced.
+Server Startup: Managed via ./server-starter.sh.
 
-* Verify only eligible clients participate in training.
+Client Startup: Executed via DEV_MODE=1 python3 -m ui.client.main.
 
-* Verify SecAgg workflow:
+Environment Variables: DEV_MODE=1 must be respected to enable developer/mock features.
 
-  * Mask generation and aggregation
-  * Dropout handling
-  * Mask recalculation when clients >= min_clients
-  * Abort when clients < min_clients
+Phase 0: Environment & Bootstrap Verification
 
-* Verify training lifecycle:
+Goal: Ensure the tooling and scripts are ready for execution.
 
-  * Training rounds execute correctly
-  * Server enters cooldown after training
-  * Cooldown prevents excessive computation
+Task 0.1: Verify server-starter.sh has execution permissions and starts the Flower server without immediate crashes.
 
-* Verify UI:
+Task 0.2: Verify the client entry point ui.client.main is accessible via the provided python module command.
 
-  * Client states (connected, training, idle, error)
-  * Logs are streamed correctly
-  * Real-time updates via signals/slots
+Task 0.3: Check if DEV_MODE=1 is correctly interpreted by the codebase to bypass hardware-specific or production-only constraints.
 
-* Verify configuration:
+Phase 1: Connection Logic & Interface Correction
 
-  * Connection URI setup
-  * ETL configuration
-  * Client settings propagation
+Goal: Solve the NotImplementedError preventing client-server registration.
 
-* Verify dashboard:
+Task 1.1: Audit Client Implementation: Inspect the Flower client class (inheriting from flwr.client.Client or NumPyClient).
 
-  * Training parameters can be modified
-  * Changes propagate correctly
+Task 1.2: Resolve NotImplementedError: * Identify missing mandatory Flower methods (e.g., get_parameters, fit, evaluate).
 
-* Verify Flower integration:
+Implement the bridge between these Flower callbacks and the internal training/data logic.
 
-  * Client-server communication
-  * Training orchestration
+Task 1.3: Verification of Flow:
 
-* Verify model distribution:
+Verify server accepts connections and remains continuous.
 
-  * Clients receive model locally
-  * Model is usable for inference
+Verify min_clients and max_clients logic is enforced.
 
-### Constraints
+Verify SecAgg workflow (Mask generation, dropout handling, and recalculation).
 
-* Do NOT modify code unless a critical issue is found.
+Output: Successful connection logs showing the client registered with the server.
 
-### Output
+Phase 2: Signal-Slot Completion
 
-* Checklist: Working / Broken / Missing
-* Exact file/module references for issues
+Goal: Ensure the UI and the Backend Worker threads communicate flawlessly.
 
----
+Task 2.1: Audit Signal Map: Identify missing QtCore.Signal connections between the client worker and the PySide6 UI.
 
-## Phase 2: Signal-Slot Completion
+Task 2.2: Thread-Safe Updates:
 
-### Instruction
+Connect client state updates (Connected, Training, Idle, Error).
 
-You are responsible for completing all missing signal-slot connections without altering existing working logic.
+Stream logs from the background process to the UI log viewer.
 
-### Tasks
+Update training progress bars/stats via signals.
 
-* Audit all signals and slots in UI and client code.
+Task 2.3: Configuration Loop: Ensure UI dashboard changes (training parameters) propagate correctly to the client settings.
 
-* Identify missing or incomplete connections.
+Output: Real-time UI updates reflecting the actual state of the background FL client.
 
-* Connect signals for:
+Phase 3: Prediction Integration
 
-  * Client state updates
-  * Training progress
-  * Logs
-  * Errors
-  * Configuration updates
+Goal: Connect the UI inference tab to the latest local model.
 
-* Ensure:
+Task 3.1: Module Mapping: Identify the prediction/inference module within the client code.
 
-  * Thread-safe signal emission
-  * No direct UI updates from worker threads
-  * Proper separation of UI and backend logic
+Task 3.2: Weights Loading: Ensure the inference engine uses the latest global model weights received from the server.
 
-* Validate full communication loop:
-  UI → Client → Server → Client → UI
+Task 3.3: UI Bridge: Connect the "Predict" button to the inference logic. Handle scenarios where no model has been downloaded yet with a user-friendly message.
 
-### Constraints
+Output: Functional inference pipeline with results displayed in the UI.
 
-* Do NOT rewrite existing signal-slot logic.
-* Only add missing connections.
 
-### Output
+Success Criteria
 
-* List of added connections
-* Confirmation of real-time UI updates
+Connection Fixed: Client no longer throws NotImplementedError on startup.
 
----
+Reactive UI: All logs and state changes are visible in the UI via Signal-Slots.
 
-## Phase 3: Prediction Integration
+Inference Ready: Users can perform predictions using the latest aggregated model.
 
-### Instruction
-
-You are responsible for connecting the UI inference flow to the client prediction module.
-
-### Tasks
-
-* Identify prediction module in client.
-* Connect inference UI to prediction calls.
-* Ensure latest downloaded model is used.
-* Handle missing model scenarios.
-* Display prediction results in UI.
-
-### Constraints
-
-* Do NOT modify prediction logic.
-* Only integrate and adapt interfaces.
-
-### Output
-
-* Working inference pipeline
-* Proper error handling
-
----
-
-## Phase 4: End-to-End Validation
-
-### Instruction
-
-You are responsible for validating the complete system workflow.
-
-### Tasks
-
-* Start client from UI.
-
-* Connect to server.
-
-* Execute training round.
-
-* Validate SecAgg under dropout scenarios.
-
-* Ensure model is received locally.
-
-* Perform inference via UI.
-
-* Test edge cases:
-
-  * Client dropout
-  * Below min_clients
-  * Network interruptions
-  * Reconnect scenarios
-
-* Verify UI responsiveness (no blocking operations).
-
-* Verify logs and observability.
-
-### Constraints
-
-* Do NOT introduce new logic unless required to fix a verified issue.
-
-### Output
-
-* End-to-end validation report
-* Edge case test results
-
----
-
-## Execution Rules
-
-* Follow order: Verify → Integrate → Test
-* Do NOT skip verification.
-* Test after every change.
-* Prefer logging over assumptions.
-* Stop and report on unexpected behavior.
-
----
-
-## Success Criteria
-
-* All verification checks pass.
-* No regressions introduced.
-* Signal-slot communication is complete.
-* Prediction works reliably.
-* System is stable under edge cases.
+Stability: System handles client dropouts and server cooldowns gracefully.

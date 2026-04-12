@@ -8,6 +8,7 @@ import grpc
 # Import from the client module
 from client.client_common import FLClientRuntime
 from client.inference_engine import predict_from_inputs, PredictionResult, get_model_info
+from client.shap_engine import get_global_explainer, get_local_explainer
 from common.config import CLIENT_ID, get_client_dataset_paths, get_input_dim
 from common.network import NeuralNetworkAlgo
 
@@ -46,18 +47,30 @@ class InferenceWorker(QObject):
 
 class ShapWorker(QObject):
     """Worker running on a background QThread to perform SHAP tasks."""
-    shap_result = Signal(object)
+    shap_global_result = Signal(object)
+    shap_local_result = Signal(object)
 
     @Slot(object)
-    def run_shap(self, data: Any):
-        # Placeholder for SHAP logic integration
+    def run_global_shap(self, background_data: Any):
         try:
-            # result = compute_shap(data)
-            self.shap_result.emit({"status": "success", "data": "SHAP analysis complete"})
+            fig = get_global_explainer(background_data)
+            self.shap_global_result.emit(fig)
+            print("Global SHAP Explainer generated successfully.")
         except Exception as e:
-            err_msg = f"SHAP engine failed: {str(e)}"
+            err_msg = f"Global SHAP engine failed: {str(e)}"
             LOGGER.error(err_msg)
-            self.shap_result.emit(e)
+            self.shap_global_result.emit(e)
+
+    @Slot(object, object)
+    def run_local_shap(self, background_data: Any, instance_data: Any):
+        try:
+            fig = get_local_explainer(background_data, instance_data)
+            self.shap_local_result.emit(fig)
+            print("Local SHAP Explainer generated successfully.")
+        except Exception as e:
+            err_msg = f"Local SHAP engine failed: {str(e)}"
+            LOGGER.error(err_msg)
+            self.shap_local_result.emit(e)
 
 
 class FLSystemWorker(QObject):
@@ -71,8 +84,9 @@ class FLSystemWorker(QObject):
     clean slate after service restarts or network interruptions without
     requiring an explicit disconnect step.
     """
-    training_started = Signal()
+    training_started = Signal(int)
     training_ended = Signal(bool)
+    evaluation_completed = Signal(float, float)
     fl_client_started = Signal()
     fl_client_stopped = Signal(bool, str)  # success, message
     mute_rejected = Signal()              # emitted when mute() fails (client is mid-training)
@@ -109,13 +123,17 @@ class FLSystemWorker(QObject):
             learning_rate=lr,
             on_training_start=self._on_training_start_callback,
             on_training_end=self._on_training_end_callback,
+            on_evaluate=self._on_evaluate_callback,
         )
 
-    def _on_training_start_callback(self):
-        self.training_started.emit()
+    def _on_training_start_callback(self, round_num: int):
+        self.training_started.emit(round_num)
 
     def _on_training_end_callback(self, success: bool):
         self.training_ended.emit(success)
+
+    def _on_evaluate_callback(self, loss: float, acc: float):
+        self.evaluation_completed.emit(loss, acc)
 
     @Slot(str, int, int, float)
     def start_fl_client(self, server_address: str, local_epochs: int, batch_size: int, lr: float):
@@ -186,7 +204,7 @@ class FLSystemWorker(QObject):
                         node_config={},
                         load_client_app_fn=_load_client_app,
                         insecure=True,
-                        transport="grpc-bidi",
+                        transport="grpc-rere",
                         # Allow unlimited reconnect retries so the client survives
                         # transient server restarts without terminating the UI.
                         max_retries=None,
@@ -271,11 +289,13 @@ class FLWorker(QObject):
     prediction_result = Signal(object)
 
     # Signals for SHAP
-    shap_result = Signal(object)
+    shap_global_result = Signal(object)
+    shap_local_result = Signal(object)
 
     # Signals for FL Training
-    training_started = Signal()
+    training_started = Signal(int)
     training_ended = Signal(bool)
+    evaluation_completed = Signal(float, float)
     fl_client_started = Signal()
     fl_client_stopped = Signal(bool, str)  # success, message
     mute_rejected = Signal()              # emitted when mute() is rejected (mid-training)
@@ -285,7 +305,8 @@ class FLWorker(QObject):
 
     # Internal routing signals (cross thread boundaries)
     _run_prediction_signal = Signal(dict)
-    _run_shap_signal = Signal(object)
+    _run_shap_global_signal = Signal(object)
+    _run_shap_local_signal = Signal(object, object)
     _start_fl_signal = Signal(str, int, int, float)
     _stop_fl_signal = Signal()
     _resume_fl_signal = Signal()
@@ -313,7 +334,8 @@ class FLWorker(QObject):
 
         # 4. Connect routing signals (Controller -> Worker)
         self._run_prediction_signal.connect(self.inference_worker.run_prediction)
-        self._run_shap_signal.connect(self.shap_worker.run_shap)
+        self._run_shap_global_signal.connect(self.shap_worker.run_global_shap)
+        self._run_shap_local_signal.connect(self.shap_worker.run_local_shap)
         self._start_fl_signal.connect(self.fl_system_worker.start_fl_client)
         # NOTE: _stop_fl_signal and _resume_fl_signal are intentionally NOT
         # connected to FLSystemWorker slots here. The fl_thread is permanently
@@ -323,10 +345,12 @@ class FLWorker(QObject):
 
         # 5. Connect worker signals back out (Worker -> Controller -> UI)
         self.inference_worker.prediction_result.connect(self.prediction_result)
-        self.shap_worker.shap_result.connect(self.shap_result)
+        self.shap_worker.shap_global_result.connect(self.shap_global_result)
+        self.shap_worker.shap_local_result.connect(self.shap_local_result)
 
         self.fl_system_worker.training_started.connect(self.training_started)
         self.fl_system_worker.training_ended.connect(self.training_ended)
+        self.fl_system_worker.evaluation_completed.connect(self.evaluation_completed)
         self.fl_system_worker.fl_client_started.connect(self.fl_client_started)
         self.fl_system_worker.fl_client_stopped.connect(self.fl_client_stopped)
         self.fl_system_worker.mute_rejected.connect(self.mute_rejected)
@@ -398,9 +422,14 @@ class FLWorker(QObject):
         self._run_prediction_signal.emit(inputs)
 
     @Slot(object)
-    def run_shap(self, data: Any):
-        """Routes SHAP command to shap worker."""
-        self._run_shap_signal.emit(data)
+    def run_shap_global(self, background_data: Any):
+        """Routes Global SHAP command to shap worker."""
+        self._run_shap_global_signal.emit(background_data)
+        
+    @Slot(object, object)
+    def run_shap_local(self, background_data: Any, instance_data: Any):
+        """Routes Local SHAP command to shap worker."""
+        self._run_shap_local_signal.emit(background_data, instance_data)
 
     def shutdown(self):
         """Gracefully stop background threads, force killing FL thread if still blocked."""

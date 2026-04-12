@@ -112,7 +112,9 @@ class ClientUi(QMainWindow):
         # ── Wire FL worker → tabs ─────────────────────────────────────────
         self.config_tab.sync_requested.connect(self._on_sync_requested)
         self.fl_worker.training_started.connect(self.config_tab.on_training_started)
+        self.fl_worker.training_started.connect(self.dashboard_tab.update_round)
         self.fl_worker.training_ended.connect(self.config_tab.on_training_ended)
+        self.fl_worker.evaluation_completed.connect(self.dashboard_tab.update_evaluation)
         self.fl_worker.fl_client_started.connect(self.config_tab.on_fl_client_started)
         self.fl_worker.fl_client_stopped.connect(self.config_tab.on_fl_client_stopped)
         self.fl_worker.mute_rejected.connect(self.on_mute_rejected)
@@ -122,6 +124,13 @@ class ClientUi(QMainWindow):
         self.fl_worker.prediction_result.connect(self.inference_tab.display_prediction_result)
         self.inference_tab.etl_toggle_requested.connect(self.config_tab.toggle_etl)
         self.config_tab.etl_toggled.connect(self.inference_tab.set_etl_state)
+
+        # SHAP integration
+        self.inference_tab.predict_requested.connect(
+            lambda val_map: self.fl_worker.run_shap_local(self._get_background_data(), val_map)
+        )
+        self.fl_worker.shap_local_result.connect(self._on_shap_local_result)
+        self.fl_worker.shap_global_result.connect(self._on_shap_global_result)
 
         # Dashboard "Edit Configuration" button → jump to settings tab
         self.dashboard_tab.goto_settings_requested.connect(
@@ -148,6 +157,30 @@ class ClientUi(QMainWindow):
             self.batch_size, 
             self.learning_rate
         )
+
+    def _get_background_data(self):
+        # A dummy background data generator.
+        # In a real scenario, this would sample from local client dataset.
+        import numpy as np
+        # 12 is dummy input dim, will be inferred by SHAP or prediction dynamically.
+        # Assuming we need some background info. We return a small batch of zeros for now.
+        return np.zeros((10, 12))
+
+    @Slot(object)
+    def _on_shap_local_result(self, fig):
+        if isinstance(fig, Exception):
+            print(f"[SHAP] Error computing local explainer: {fig}")
+        else:
+            print("[SHAP] Successfully generated local explainer waterfall plot.")
+            # fig.show() can be called to display the plot in a new matplotlib window, or it can be embedded into PyQt later.
+
+    @Slot(object)
+    def _on_shap_global_result(self, fig):
+        if isinstance(fig, Exception):
+            print(f"[SHAP] Error computing global explainer: {fig}")
+        else:
+            print("[SHAP] Successfully generated global explainer summary plot.")
+            # fig.show()
 
     @Slot(str, int, int, float)
     def _on_sync_requested(self, server_address: str, local_epochs: int, batch_size: int, lr: float):

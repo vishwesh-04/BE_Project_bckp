@@ -55,7 +55,14 @@ class DashboardTab(QWidget):
         ]
 
         for title, value, sub, color, clickable in cards:
-            card = self._make_stat_card(title, value, sub, color, clickable)
+            card, lbl_val, lbl_sub = self._make_stat_card(title, value, sub, color, clickable)
+            if title == "Training Round":
+                self._lbl_round_val = lbl_val
+                self._lbl_round_sub = lbl_sub
+            elif title == "Validation Acc.":
+                self._lbl_acc_val = lbl_val
+                self._lbl_acc_sub = lbl_sub
+            
             row.addWidget(card)
 
         return row
@@ -92,7 +99,7 @@ class DashboardTab(QWidget):
         if clickable:
             card.mousePressEvent = lambda _e: self.open_logs_requested.emit()
 
-        return card
+        return card, lbl_value, lbl_sub
 
     # -------------------------------------------------------------------- #
     #  Line chart card                                                      #
@@ -118,14 +125,14 @@ class DashboardTab(QWidget):
         chart.setBackgroundBrush(QColor("transparent"))
 
         # Local node accuracy (teal solid line)
-        local_series = QLineSeries()
-        local_series.setName("Local Node Accuracy")
-        local_pts = [(8, 78), (9, 79), (10, 81.5), (11, 80.2), (12, 82.1), (13, 82.9), (14, 84.12)]
-        for x, y in local_pts:
-            local_series.append(x, y)
+        self.local_series = QLineSeries()
+        self.local_series.setName("Local Node Accuracy")
+        self.local_pts = [(8, 78), (9, 79), (10, 81.5), (11, 80.2), (12, 82.1), (13, 82.9), (14, 84.12)]
+        for x, y in self.local_pts:
+            self.local_series.append(x, y)
         pen = QPen(QColor("#0d9488"))
         pen.setWidth(3)
-        local_series.setPen(pen)
+        self.local_series.setPen(pen)
 
         # Global baseline (slate dashed line)
         global_series = QLineSeries()
@@ -138,7 +145,7 @@ class DashboardTab(QWidget):
         dash_pen.setStyle(Qt.DashLine)
         global_series.setPen(dash_pen)
 
-        chart.addSeries(local_series)
+        chart.addSeries(self.local_series)
         chart.addSeries(global_series)
 
         axis_x = QValueAxis()
@@ -154,8 +161,8 @@ class DashboardTab(QWidget):
 
         chart.addAxis(axis_x, Qt.AlignBottom)
         chart.addAxis(axis_y, Qt.AlignLeft)
-        local_series.attachAxis(axis_x)
-        local_series.attachAxis(axis_y)
+        self.local_series.attachAxis(axis_x)
+        self.local_series.attachAxis(axis_y)
         global_series.attachAxis(axis_x)
         global_series.attachAxis(axis_y)
 
@@ -225,5 +232,28 @@ class DashboardTab(QWidget):
     @Slot(int)
     def update_round(self, round_num: int):
         """Update the training round card's value."""
-        # Future: update the round number dynamically
-        pass
+        self._current_round = round_num
+        self._lbl_round_val.setText(str(round_num))
+        self._lbl_round_sub.setText("IN PROGRESS")
+        self._lbl_round_sub.setStyleSheet("color: #f59e0b; font-size: 10px; font-weight: bold;")
+
+    @Slot(float, float)
+    def update_evaluation(self, loss: float, acc: float):
+        """Updates the evaluation statistics chart and validation card."""
+        self._lbl_round_sub.setText("COMPLETED")
+        self._lbl_round_sub.setStyleSheet("color: #0d9488; font-size: 10px; font-weight: bold;")
+        
+        pct_acc = acc * 100
+        self._lbl_acc_val.setText(f"{pct_acc:.2f}%")
+        self._lbl_acc_sub.setText(f"Loss: {loss:.4f}")
+        
+        # Append point directly to existing list and series
+        rnd = getattr(self, "_current_round", 0)
+        self.local_pts.append((rnd, pct_acc))
+        # Optional: Maintain window size
+        if len(self.local_pts) > 10:
+            self.local_pts.pop(0)
+            
+        self.local_series.clear()
+        for x, y in self.local_pts:
+            self.local_series.append(x, y)

@@ -56,8 +56,9 @@ class FLClientRuntime(NumPyClient):
         # on_training_end(success: bool): called when fit() completes/fails.
         # Both default to None; headless usage is completely unaffected.
         # ------------------------------------------------------------------
-        on_training_start: Optional[Callable[[], None]] = None,
+        on_training_start: Optional[Callable[[int], None]] = None,
         on_training_end: Optional[Callable[[bool], None]] = None,
+        on_evaluate: Optional[Callable[[float, float], None]] = None,
     ):
         self.client_id = str(client_id)
         self.train_path = train_path
@@ -70,6 +71,7 @@ class FLClientRuntime(NumPyClient):
         self.learning_rate = learning_rate
         self._on_training_start = on_training_start
         self._on_training_end = on_training_end
+        self._on_evaluate = on_evaluate
 
         # ------------------------------------------------------------------
         # Thread-safe state:
@@ -293,9 +295,10 @@ class FLClientRuntime(NumPyClient):
         # This blocks mute() from succeeding mid-training, enforcing
         # the "can't mute while training" guarantee.
         with self._busy_lock:
+            server_round = config.get("server_round", 0)
             if self._on_training_start is not None:
                 try:
-                    self._on_training_start()
+                    self._on_training_start(int(server_round))
                 except Exception as exc:
                     LOGGER.debug("on_training_start callback error: %s", exc)
             try:
@@ -339,6 +342,13 @@ class FLClientRuntime(NumPyClient):
         self.algo.set_weights(parameters)
         loss, acc = self.algo.test(self.test_path)
         _, y_data = load_local_data(self.test_path)
+        
+        if self._on_evaluate is not None:
+            try:
+                self._on_evaluate(float(loss), float(acc))
+            except Exception as exc:
+                LOGGER.debug("on_evaluate callback error: %s", exc)
+                
         return float(loss), len(y_data), {
             "accuracy": float(acc),
             "skipped": False,
