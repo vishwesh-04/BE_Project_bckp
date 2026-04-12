@@ -1,0 +1,25 @@
+[project]
+name = "be-project"
+version = "1.0.0"
+description = "Federated Learning system for BE Project"
+license = "MIT"
+authors = ["Vishwesh"]
+
+[tool.flwr.app]
+publisher = "vishwesh"
+
+[tool.flwr.app.components]
+serverapp = "server.server_app:app"
+clientapp = "client.client_app:app"
+
+[tool.flwr.app.config]
+# Default run-config values (can be overridden at runtime with --run-config)
+num_rounds = 4
+local_epochs = 3
+batch_size = 32
+learning_rate = 0.001
+
+# Local insecure federation — SuperLink Control API is on port 9093
+[tool.flwr.federations.local-insecure]
+address = "127.0.0.1:9093"
+insecure = true

@@ -6,9 +6,9 @@ import logging
 from logging import INFO
 from typing import Any, Callable, Optional
 
-from flwr.common import ConfigsRecord, Context
+from flwr.common import ConfigRecord, Context
 from flwr.common.logger import log
-from flwr.server import LegacyContext
+from flwr.server import Grid, LegacyContext
 from flwr.server.compat.app_utils import start_update_client_manager_thread
 from flwr.server.workflow.constant import MAIN_CONFIGS_RECORD, Key as WorkflowKey
 from flwr.server.workflow.default_workflows import (
@@ -59,24 +59,25 @@ class EventDrivenWorkflow:
             except Exception as exc:
                 LOGGER.debug("on_status_changed callback error: %s", exc)
 
-    def __call__(self, driver: Driver, context: Context) -> None:
+    def __call__(self, grid: Grid, context: Context) -> None:
         if not isinstance(context, LegacyContext):
             raise TypeError(f"Expect a LegacyContext, but get {type(context).__name__}.")
 
-        thread, f_stop = start_update_client_manager_thread(driver, context.client_manager)
+        thread, f_stop, c_done = start_update_client_manager_thread(grid, context.client_manager)
+        c_done.wait()  # Wait for initial client node registration to complete
 
         try:
             self.state_store.set_training_started_at()
             self.state_store.set_training_status("initializing")
             self._cb_status("initializing", 0)
             log(INFO, "[INIT]")
-            default_init_params_workflow(driver, context)
+            default_init_params_workflow(grid, context)
             self.state_store.set_training_status("idle")
             self._cb_status("idle", 0)
 
-            cfg = ConfigsRecord()
+            cfg = ConfigRecord()
             cfg[WorkflowKey.START_TIME] = timeit.default_timer()
-            context.state.configs_records[MAIN_CONFIGS_RECORD] = cfg
+            context.state.config_records[MAIN_CONFIGS_RECORD] = cfg
 
             current_round = 0
             idle_time = 0.0
@@ -164,9 +165,9 @@ class EventDrivenWorkflow:
 
                 round_success = False
                 try:
-                    self.fit_workflow(driver, context)
-                    default_centralized_evaluation_workflow(driver, context)
-                    self.evaluate_workflow(driver, context)
+                    self.fit_workflow(grid, context)
+                    default_centralized_evaluation_workflow(grid, context)
+                    self.evaluate_workflow(grid, context)
                     round_success = True
                 except Exception as exc:
                     LOGGER.error("Round %s failed due to error: %s", current_round, exc)

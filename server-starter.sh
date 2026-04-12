@@ -1,34 +1,34 @@
 #!/bin/sh
+# server-starter.sh — Launch the Flower server infrastructure (SuperLink + SuperExec).
+#
+# Usage:
+#   ./server-starter.sh                                          # use defaults from .env
+#   ./server-starter.sh --fleet-api-address 0.0.0.0:45678
+#   ./server-starter.sh --appio-address 127.0.0.1:9091
+#   ./server-starter.sh --startup-delay 3
+#   ./server-starter.sh --log-level DEBUG
+#   ./server-starter.sh --help                                   # show all options
+#
+# All flags are passed through to `python -m server`.
+# Unset values fall back to the .env file / environment variables.
+
 set -eu
-. "/home/vishwesh/Documents/BE Project 2026/.venv/bin/activate"
 
-# Updated to use the exact binaries from your environment
-FLOWER_SERVER_APP_BIN=${FLOWER_SERVER_APP_BIN:-flwr-serverapp}
-FLOWER_SUPERLINK_BIN=${FLOWER_SUPERLINK_BIN:-flower-superlink}
-APP_DIR=${APP_DIR:-"/home/vishwesh/Documents/BE Project 2026/BE_Project/My-refractored"}
-SERVER_APP=${SERVER_APP:-server.server_app:app}
-SERVER_ADDRESS=${SERVER_ADDRESS:-0.0.0.0:45678}
-SERVER_CONTROL_ADDRESS=${SERVER_CONTROL_ADDRESS:-127.0.0.1:9091}
-SUPERLINK_STARTUP_DELAY=${SUPERLINK_STARTUP_DELAY:-2}
+# ── Activate the project venv ──────────────────────────────────────────────
+VENV_ACTIVATE=${VENV_ACTIVATE:-"/home/vishwesh/Documents/BE Project 2026/.venv/bin/activate"}
+if [ -f "${VENV_ACTIVATE}" ]; then
+  # shellcheck disable=SC1090
+  . "${VENV_ACTIVATE}"
+fi
 
-# Start the SuperLink (the central orchestrator that handles connections)
-"${FLOWER_SUPERLINK_BIN}" \
-  --insecure \
-  --fleet-api-address "${SERVER_ADDRESS}" \
-  --control-api-address "${SERVER_CONTROL_ADDRESS}" &
-SUPERLINK_PID=$!
+# ── Change to project root ─────────────────────────────────────────────────
+APP_DIR=${APP_DIR:-"$(cd "$(dirname "$0")" && pwd)"}
+cd "${APP_DIR}"
 
-cleanup() {
-  kill "${SUPERLINK_PID}" 2>/dev/null || true
-}
+echo "[SERVER-STARTER] Working directory: ${APP_DIR}"
+echo "[SERVER-STARTER] Python: $(python --version 2>&1)"
+echo "[SERVER-STARTER] Launching server..."
+echo ""
 
-trap cleanup INT TERM EXIT
-
-sleep "${SUPERLINK_STARTUP_DELAY}"
-
-# Start the ServerApp (contains your custom strategy and orchestration logic)
-exec "${FLOWER_SERVER_APP_BIN}" \
-  --insecure \
-  --dir "${APP_DIR}" \
-  --superlink "${SERVER_CONTROL_ADDRESS}" \
-  "${SERVER_APP}"
+# Pass all CLI arguments through to python -m server
+exec python -m server "$@"
