@@ -3,9 +3,10 @@ import traceback
 from typing import Any, Mapping, Optional
 
 from PySide6.QtCore import QObject, Signal, Slot, QThread
+import grpc
 
 # Import from the client module
-from client.client_common import FLClientRuntime, ClientReadyState
+from client.client_common import FLClientRuntime
 from client.inference_engine import predict_from_inputs, PredictionResult
 from common.config import CLIENT_ID, get_client_dataset_paths, get_input_dim
 from common.network import NeuralNetworkAlgo
@@ -58,14 +59,6 @@ class FLSystemWorker(QObject):
     """
     Worker running on a background QThread to perform Federated Learning execution.
 
-    SecAgg+ integration:
-    Rather than using the legacy fl.client.start_client() (which wraps the
-    client in a plain ClientApp *without* the secaggplus_mod middleware), we
-    call flwr's internal _start_client_internal() and supply a
-    load_client_app_fn that returns the *real* ClientApp defined in
-    client/client_app.py — the one that already has mods=[secaggplus_mod].
-    This is the modern / correct approach for Flower 1.10.
-
     Reconnection handling:
     Each call to start_fl_client() issues a fresh gRPC connection.
     If the client was previously running (even on the same URL), the old
@@ -102,8 +95,8 @@ class FLSystemWorker(QObject):
         """Helper to create FLClientRuntime with GUI signals bound."""
         return FLClientRuntime(
             client_id=str(self.client_id),
-            train_path=self.train_path,
-            test_path=self.test_path,
+            train_path=str(self.train_path),
+            test_path=str(self.test_path),
             algo=NeuralNetworkAlgo(input_dim=self.input_dim),
             use_personalization=False,
             local_epochs=local_epochs,
@@ -179,22 +172,41 @@ class FLSystemWorker(QObject):
                 mods = [secaggplus_mod] if SECAGG_ENABLED else []
                 return ClientApp(client_fn=_client_fn, mods=mods)
 
-            _start_client_internal(
-                server_address=server_address,
-                node_config={},
-                load_client_app_fn=_load_client_app,
-                insecure=True,
-                transport="grpc-rere",
-                # Allow unlimited reconnect retries so the client survives
-                # transient server restarts without terminating the UI.
-                max_retries=None,
-                max_wait_time=None,
-            )
-            self.fl_client_stopped.emit(True, "Disconnected normally.")
-        except BaseException as e:
-            err_msg = f"FL client stopped: {str(e)}\n{traceback.format_exc()}"
-            LOGGER.error(err_msg)
-            self.fl_client_stopped.emit(False, str(e))
+            if self.fl_client is not None:
+                try:
+                    # In newer flwr versions, start_client transport defaults to 'grpc-bidi'
+                    # which is compatible with older versions of start_server
+                    _start_client_internal(
+                        server_address=server_address,
+                        node_config={},
+                        load_client_app_fn=_load_client_app,
+                        insecure=True,
+                        transport="grpc-bidi",
+                        # Allow unlimited reconnect retries so the client survives
+                        # transient server restarts without terminating the UI.
+                        max_retries=None,
+                        max_wait_time=None,
+                    )
+                    self.fl_client_stopped.emit(True, "Disconnected normally.")
+                except Exception as e:
+                    # Flower often raises a custom Exception or MultiThreadedRendezvous inside start_client
+                    err_str = str(e)
+                    
+                    if "StatusCode.UNAVAILABLE" in err_str:
+                        err_msg = f"Failed to connect to FL Server at {server_address}. The server might be offline or starting up."
+                        LOGGER.error(err_msg)
+                        self.fl_client_stopped.emit(False, "Server Offline")
+                    elif "StatusCode.UNIMPLEMENTED" in err_str or "Method not found" in err_str:
+                        # FALLBACK to grpc-bidi if Server version mismatch occurs
+                        err_msg = f"Version mismatch or incorrect endpoint on FL Server at {server_address}. Method not found. (Using grpc-bidi transport)"
+                        LOGGER.error(err_msg)
+                        self.fl_client_stopped.emit(False, "Server Version/Endpoint Mismatch")
+                    else:
+                        raise e # Not a known grpc connection error, escalate
+        except Exception as e:
+             err_msg = f"FL client stopped: {str(e)}\n{traceback.format_exc()}"
+             LOGGER.error(err_msg)
+             self.fl_client_stopped.emit(False, str(e))
         finally:
             _signal.signal = original_signal
 
@@ -300,7 +312,7 @@ class FLWorker(QObject):
         self._start_fl_signal.connect(self.fl_system_worker.start_fl_client)
         # NOTE: _stop_fl_signal and _resume_fl_signal are intentionally NOT
         # connected to FLSystemWorker slots here. The fl_thread is permanently
-        # blocked inside _start_client_internal() (gRPC loop), so its Qt event
+        # blocked inside start_client() (gRPC loop), so its Qt event
         # loop never processes queued signals. mute()/unmute() are
         # threading.Event operations safe to call directly from any thread.
 
@@ -332,7 +344,7 @@ class FLWorker(QObject):
 
         CRITICAL: We call fl_system_worker.fl_client.mute() DIRECTLY here,
         bypassing the Qt signal/slot queue.  The fl_thread is permanently
-        blocked inside _start_client_internal() (the Flower gRPC loop), so
+        blocked inside start_client() (the Flower gRPC loop), so
         its event loop never processes queued signals — emitting _stop_fl_signal
         would silently do nothing and the client would keep replying ready=True.
 
@@ -402,4 +414,3 @@ class FLWorker(QObject):
             self.shutdown()
         except Exception:
             pass  # Qt C++ objects may already be deleted by GC time
-

@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QStackedWidget, QFrame, QLabel, QCheckBox
 )
-from PySide6.QtCore import Qt, QFile, QTextStream, QThread, Slot
+from PySide6.QtCore import Qt, QFile, QTextStream, QThread, Slot, QSettings
 
 # ── Tab widgets ──────────────────────────────────────────────────────────────
 from ui.widgets.DashboardTab import DashboardTab
@@ -47,6 +47,15 @@ class ClientUi(QMainWindow):
         self.resize(1280, 750)
         self.load_resources()
 
+        # Initialize QSettings
+        self.settings = QSettings("MedLink", "FLNodeDashboard")
+
+        # Load or set default node settings
+        self.server_address = self.settings.value("server_address", "127.0.0.1:45678")
+        self.local_epochs = int(self.settings.value("local_epochs", 3))
+        self.batch_size = int(self.settings.value("batch_size", 32))
+        self.learning_rate = float(self.settings.value("learning_rate", 0.001))
+
         # ── Background worker ─────────────────────────────────────────────
         self.worker_thread = QThread()
         self.fl_worker = FLWorker()
@@ -75,6 +84,12 @@ class ClientUi(QMainWindow):
         self.content_stack.addWidget(self.history_tab)     # 3
         self.content_stack.addWidget(self.config_tab)      # 4
 
+        # Initialize UI elements with settings
+        self.config_tab.server_input.setText(self.server_address)
+        self.config_tab.epochs_input.setText(str(self.local_epochs))
+        self.config_tab.batch_input.setText(str(self.batch_size))
+        self.config_tab.lr_input.setText(str(self.learning_rate))
+
         # ── Sidebar ───────────────────────────────────────────────────────
         self.sidebar = Sidebar()
         self.sidebar.nav_clicked.connect(self._on_tab_changed)
@@ -95,7 +110,7 @@ class ClientUi(QMainWindow):
         main_layout.setStretch(1, 1)   # content: expands
 
         # ── Wire FL worker → tabs ─────────────────────────────────────────
-        self.config_tab.sync_requested.connect(self.fl_worker.start_fl_client)
+        self.config_tab.sync_requested.connect(self._on_sync_requested)
         self.fl_worker.training_started.connect(self.config_tab.on_training_started)
         self.fl_worker.training_ended.connect(self.config_tab.on_training_ended)
         self.fl_worker.fl_client_started.connect(self.config_tab.on_fl_client_started)
@@ -121,6 +136,27 @@ class ClientUi(QMainWindow):
         self.ready_toggle.toggled.connect(self._on_ready_ui_update)
         # Manually trigger initial state to configure colors properly
         self._on_ready_ui_update(self.ready_toggle.isChecked())
+
+        # Start the client on launch with saved settings
+        self.fl_worker.start_fl_client(
+            self.server_address, 
+            self.local_epochs, 
+            self.batch_size, 
+            self.learning_rate
+        )
+
+    @Slot(str, int, int, float)
+    def _on_sync_requested(self, server_address: str, local_epochs: int, batch_size: int, lr: float):
+        # Save settings when updated
+        self.settings.setValue("server_address", server_address)
+        self.settings.setValue("local_epochs", local_epochs)
+        self.settings.setValue("batch_size", batch_size)
+        self.settings.setValue("learning_rate", lr)
+        
+        self.server_addr_lbl.setText(server_address)
+
+        # Pass to worker
+        self.fl_worker.start_fl_client(server_address, local_epochs, batch_size, lr)
 
     # ──────────────────────────────────────────────────────────────────────
     #  Topbar
@@ -198,7 +234,7 @@ class ClientUi(QMainWindow):
         server_lbl_title.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         node_id = os.environ.get("CLIENT_ID", "1")
-        self.server_addr_lbl = QLabel("127.0.0.1:45678")
+        self.server_addr_lbl = QLabel(self.server_address)
         self.server_addr_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #1e293b; border: none;")
         self.server_addr_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
 

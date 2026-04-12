@@ -57,4 +57,4 @@ def client_fn(context: Context):
     return client_instance.to_client()
 
 
-app = ClientApp(client_fn=client_fn, mods=[secaggplus_mod])
+# app = ClientApp(client_fn=client_fn, mods=[secaggplus_mod])
